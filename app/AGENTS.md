@@ -24,7 +24,7 @@
 
 Перед изменениями читать релевантные документы:
 
-- [docs/README.md](./docs/README.md) - обзор и быстрый старт.
+- [README.md](../README.md) - обзор и быстрый старт.
 - [docs/functionality.md](./docs/functionality.md) - пользовательский функционал, роли, админка, редактор, hotkeys.
 - [docs/api.md](./docs/api.md) - REST API, DTO, ошибки, cURL.
 - [docs/architecture.md](./docs/architecture.md) - модули, сервисы, SQLite-схема, frontend-структура.
