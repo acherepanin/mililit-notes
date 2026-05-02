@@ -10,7 +10,14 @@ export interface CopyFieldKindLabels {
   fieldKindUrl: string;
 }
 
-export const copyFieldKinds: CopyFieldKind[] = ['text', 'login', 'password', 'credential', 'token', 'url'];
+export const copyFieldKinds: CopyFieldKind[] = [
+  'text',
+  'login',
+  'password',
+  'credential',
+  'token',
+  'url',
+];
 
 export function getKindLabel(labels: CopyFieldKindLabels, kind: CopyFieldKind): string {
   const labelsByKind: Record<CopyFieldKind, string> = {

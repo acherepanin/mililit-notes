@@ -38,14 +38,14 @@ export function Topbar({
         <input
           className="title-input"
           value={draft.name}
-          placeholder={t('emptyEditor')}
+          placeholder=""
           onChange={(event) => onDraftNameChange(event.target.value)}
           disabled={!selectedNote || !isEditing}
         />
         <span className="title-meta">
           {selectedNote
             ? `${t('updated')} ${new Date(selectedNote.updatedAt).toLocaleString(dateLocale)}`
-            : t('emptyEditor')}
+            : ''}
         </span>
       </div>
       <div className="topbar__actions">

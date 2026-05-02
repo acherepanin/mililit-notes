@@ -2,348 +2,277 @@
 
 ## Общая Схема
 
+Приложение разделено на два TypeScript-проекта:
+
+- `app/back` - NestJS backend, SQLite, REST API, auth, роли, админские операции, отдача frontend-статики.
+- `app/front` - React + Vite SPA, Tiptap editor, дерево заметок, админ-панель, темы и локализация.
+
+Production-поток:
+
+1. `app/front` собирается в `app/back/public`.
+2. `app/back` компилируется в `app/back/dist`.
+3. NestJS отдает `/api/*` и статический frontend с одного порта.
+
+## Backend
+
+### Модули
+
+- `AppModule` - подключает `ConfigModule`, `ServeStaticModule`, `AuthModule`, `AdminModule`, `DatabaseModule`, `NotesModule`, `HealthController`.
+- `DatabaseModule` - singleton `DatabaseService`.
+- `AuthModule` - login, token verification, текущий пользователь, preferences.
+- `NotesModule` - CRUD и move заметок текущего пользователя.
+- `AdminModule` - пользователи, статистика, история действий.
+- `ActivityModule` - запись и чтение audit-событий.
+
+### Конфигурация
+
+`ConfigModule.forRoot({ isGlobal: true })` читает `.env`.
+
+Ключевые env:
+
+- `PORT`
+- `DB_PATH`
+- `ADMIN_USERNAME`
+- `ADMIN_PASSWORD`
+- `AUTH_SECRET`
+- `AUTH_TOKEN_TTL_SECONDS`
+
+Парсинг чисел выполняется через `src/config/env.ts`.
+
+### HTTP Boundary
+
+`main.ts` настраивает:
+
+- global prefix `api`;
+- CORS;
+- global `ValidationPipe` с `whitelist`, `forbidNonWhitelisted`, `transform`;
+- порт из `PORT`.
+
+Controllers остаются thin: принимают DTO, получают пользователя из `AuthGuard`, вызывают сервисы.
+
+### Auth
+
+Auth token - простой HMAC-подписанный token формата:
+
 ```text
-React/Vite frontend
-  |
-  | fetch /api/*
-  v
-NestJS backend
-  |
-  | better-sqlite3
-  v
-SQLite file
+base64urlPayload.signature
 ```
 
-В production frontend собирается в `app/back/public`. NestJS:
+Логика подписи и чтения вынесена в `src/auth/token.ts`:
 
-- обслуживает API с глобальным префиксом `/api`;
-- исключает `/api/{*path}` из static serving;
-- отдает собранные frontend assets из `public`;
-- создает SQLite-файл при старте, если его нет.
+- `createSignedToken(payload, secret)`;
+- `readSignedToken(token, secret)`;
+- runtime-проверка payload перед использованием.
 
-## Backend Модули
+`AuthService` отвечает за:
 
-`AppModule` подключает:
+- login;
+- обновление `last_login_at`;
+- запись `auth.login` в activity;
+- получение актуального пользователя из БД при каждом request;
+- обновление `language` и `theme`.
 
-- `ConfigModule.forRoot({ isGlobal: true })`;
-- `ServeStaticModule` для `public`;
-- `DatabaseModule`;
-- `ActivityModule`;
-- `AuthModule`;
-- `AdminModule`;
-- `NotesModule`;
-- `HealthController`.
+`AuthGuard` проверяет Bearer token и кладет `request.user`.
+`AdminGuard` проверяет `request.user.role === 'admin'`.
 
-### DatabaseService
+### SQLite
 
-Файл: `app/back/src/infra/database.service.ts`
+`DatabaseService`:
 
-Ответственность:
-
-- читает `DB_PATH` из `ConfigService`;
-- если `DB_PATH` пустой, использует `join(process.cwd(), 'notes.sqlite')`;
-- создает директорию для SQLite-файла;
+- создает директорию для `DB_PATH`;
 - открывает `better-sqlite3`;
 - включает `journal_mode = WAL`;
 - включает `foreign_keys = ON`;
-- запускает миграции;
-- создает seed-admin, если пользователей нет;
-- добавляет welcome-заметку для admin, если заметок нет.
-
-Миграции совместимы с уже созданной БД:
-
-- добавляют `users.role`, если колонки нет;
-- добавляют `users.last_login_at`, если колонки нет;
-- добавляют `notes.user_id`, если колонки нет;
-- старые заметки без `user_id` привязываются к первому admin-пользователю.
-
-### AuthModule
-
-Файлы:
-
-- `app/back/src/auth/auth.controller.ts`;
-- `app/back/src/auth/auth.service.ts`;
-- `app/back/src/auth/auth.guard.ts`;
-- `app/back/src/auth/admin.guard.ts`;
-- `app/back/src/auth/password.ts`.
-
-Публичные методы:
-
-- `POST /api/auth/login`;
-- `GET /api/me`;
-- `PATCH /api/me/preferences`.
-
-`AuthService`:
-
-- ищет пользователя по логину без учета регистра;
-- проверяет пароль;
-- обновляет `last_login_at`;
-- пишет `auth.login` в `activity_logs`;
-- подписывает HMAC-токен;
-- проверяет подпись и срок действия токена;
-- всегда перечитывает пользователя из БД при проверке токена.
-
-`AuthGuard`:
-
-- принимает только `Authorization: Bearer <token>`;
-- вызывает `AuthService.verifyToken`;
-- кладет пользователя в `request.user`.
-
-`AdminGuard`:
-
-- требует `request.user.role === 'admin'`;
-- возвращает `403`, если роль не admin.
-
-### NotesModule
-
-Файлы:
-
-- `app/back/src/notes/notes.controller.ts`;
-- `app/back/src/notes/notes.service.ts`;
-- `app/back/src/notes/notes.mapper.ts`;
-- `app/back/src/notes/dto/*.ts`.
-
-Все routes защищены `AuthGuard`.
-
-Главный инвариант: каждый публичный метод принимает `userId` из токена и всегда добавляет `user_id = @userId` в SQL.
-
-Методы сервиса:
-
-- `getTree(userId)` - читает заметки текущего пользователя и собирает дерево.
-- `getById(userId, id)` - возвращает одну заметку текущего пользователя.
-- `create(userId, dto)` - проверяет parent внутри пользователя, создает заметку, пишет историю.
-- `update(userId, id, dto)` - обновляет только заметку текущего пользователя, пишет историю.
-- `move(userId, id, dto)` - проверяет parent и циклы внутри пользователя, пишет историю.
-- `delete(userId, id)` - удаляет заметку текущего пользователя, потомки удаляются каскадно, пишет историю.
-- `requireNote(userId, id)` - общая проверка существования и владения.
-- `nextPosition(userId, parentId)` - вычисляет позицию внутри parent текущего пользователя.
-- `isDescendant(userId, candidateId, ancestorId)` - защищает от циклов в дереве.
-
-### AdminModule
-
-Файлы:
-
-- `app/back/src/admin/admin.controller.ts`;
-- `app/back/src/admin/admin.service.ts`;
-- `app/back/src/admin/admin.types.ts`;
-- `app/back/src/admin/dto/create-user.dto.ts`;
-- `app/back/src/admin/dto/update-user.dto.ts`.
-
-Все routes защищены `AuthGuard` и `AdminGuard`.
-
-Методы:
-
-- `listUsers()` - список пользователей с количеством заметок.
-- `createUser(actorId, dto)` - создает пользователя, роль по умолчанию `user`, пишет историю.
-- `updateUser(actorId, id, dto)` - меняет только пароль и роль, пишет историю.
-- `deleteUser(actorId, id)` - запрещает удалить себя, удаляет пользователя и его заметки, пишет историю.
-- `listActivity(limit)` - возвращает историю.
-- `getStats()` - агрегирует статистику.
-
-Защитные правила:
-
-- нельзя удалить собственный admin-аккаунт;
-- нельзя понизить последнего администратора до `user`;
-- логин проверяется на уникальность без учета регистра;
-- неизвестные поля DTO запрещены глобальным `ValidationPipe`.
-
-### ActivityModule
-
-Файлы:
-
-- `app/back/src/activity/activity.service.ts`;
-- `app/back/src/activity/activity.types.ts`.
-
-`ActivityService.record()` пишет важное событие в `activity_logs`.
-
-`ActivityService.list(limit)`:
-
-- ограничивает `limit` диапазоном `1..200`;
-- при нечисловом значении использует `80`;
-- присоединяет actor username и target user username;
-- сортирует по `created_at DESC, id DESC`.
+- выполняет idempotent schema migration;
+- создает seed-admin, если таблица `users` пустая;
+- создает welcome note, если таблица `notes` пустая.
 
 ## SQLite Схема
 
 ### `users`
 
-| Поле            | Тип                                 | Описание                  |
-| --------------- | ----------------------------------- | ------------------------- |
-| `id`            | `INTEGER PRIMARY KEY AUTOINCREMENT` | ID пользователя           |
-| `username`      | `TEXT NOT NULL UNIQUE`              | Логин                     |
-| `password_hash` | `TEXT NOT NULL`                     | Hash пароля               |
-| `role`          | `TEXT NOT NULL DEFAULT 'user'`      | `user` или `admin`        |
-| `language`      | `TEXT NOT NULL DEFAULT 'ru'`        | `ru` или `en`             |
-| `theme`         | `TEXT NOT NULL DEFAULT 'dark'`      | `dark` или `light`        |
-| `last_login_at` | `TEXT`                              | ISO-дата последнего входа |
-| `created_at`    | `TEXT NOT NULL`                     | ISO-дата создания         |
-| `updated_at`    | `TEXT NOT NULL`                     | ISO-дата обновления       |
+| Поле | Тип | Описание |
+| --- | --- | --- |
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | ID |
+| `username` | `TEXT NOT NULL UNIQUE` | Логин |
+| `password_hash` | `TEXT NOT NULL` | PBKDF2 hash |
+| `role` | `TEXT NOT NULL DEFAULT 'user'` | `user` или `admin` |
+| `language` | `TEXT NOT NULL DEFAULT 'ru'` | `ru` или `en` |
+| `theme` | `TEXT NOT NULL DEFAULT 'dark'` | `light` или `dark` |
+| `last_login_at` | `TEXT` | Последний вход |
+| `created_at` | `TEXT NOT NULL` | Создание |
+| `updated_at` | `TEXT NOT NULL` | Обновление |
 
 ### `notes`
 
-| Поле           | Тип                                                       | Описание                |
-| -------------- | --------------------------------------------------------- | ----------------------- |
-| `id`           | `INTEGER PRIMARY KEY AUTOINCREMENT`                       | ID заметки              |
-| `user_id`      | `INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE` | Владелец заметки        |
-| `name`         | `TEXT NOT NULL`                                           | Название                |
-| `content_html` | `TEXT NOT NULL DEFAULT ''`                                | HTML из Tiptap          |
-| `content_text` | `TEXT NOT NULL DEFAULT ''`                                | Plain text              |
-| `parent_id`    | `INTEGER REFERENCES notes(id) ON DELETE CASCADE`          | Родительская заметка    |
-| `position`     | `INTEGER NOT NULL DEFAULT 0`                              | Порядок внутри родителя |
-| `created_at`   | `TEXT NOT NULL`                                           | ISO-дата создания       |
-| `updated_at`   | `TEXT NOT NULL`                                           | ISO-дата обновления     |
+| Поле | Тип | Описание |
+| --- | --- | --- |
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | ID |
+| `user_id` | `INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE` | Владелец |
+| `name` | `TEXT NOT NULL` | Название |
+| `content_html` | `TEXT NOT NULL DEFAULT ''` | HTML редактора |
+| `content_text` | `TEXT NOT NULL DEFAULT ''` | Plain text |
+| `parent_id` | `INTEGER REFERENCES notes(id) ON DELETE CASCADE` | Родительская заметка |
+| `position` | `INTEGER NOT NULL DEFAULT 0` | Позиция |
+| `created_at` | `TEXT NOT NULL` | Создание |
+| `updated_at` | `TEXT NOT NULL` | Обновление |
 
 Индексы:
 
-- `idx_notes_user_parent` по `(user_id, parent_id)`;
-- `idx_notes_position` по `(user_id, parent_id, position, name)`.
+- `idx_notes_user_parent`
+- `idx_notes_position`
 
 ### `activity_logs`
 
-| Поле          | Тип                                               | Описание                        |
-| ------------- | ------------------------------------------------- | ------------------------------- |
-| `id`          | `INTEGER PRIMARY KEY AUTOINCREMENT`               | ID события                      |
-| `actor_id`    | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Кто совершил действие           |
-| `user_id`     | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Целевой пользователь, если есть |
-| `action`      | `TEXT NOT NULL`                                   | Код действия                    |
-| `target_type` | `TEXT NOT NULL`                                   | Тип цели: `user`, `note`        |
-| `target_id`   | `INTEGER`                                         | ID цели                         |
-| `details`     | `TEXT NOT NULL DEFAULT '{}'`                      | JSON-детали события             |
-| `created_at`  | `TEXT NOT NULL`                                   | ISO-дата события                |
+| Поле | Тип | Описание |
+| --- | --- | --- |
+| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | ID |
+| `actor_id` | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Кто сделал |
+| `user_id` | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Кого касается |
+| `action` | `TEXT NOT NULL` | Код действия |
+| `target_type` | `TEXT NOT NULL` | Тип цели |
+| `target_id` | `INTEGER` | ID цели |
+| `details` | `TEXT NOT NULL DEFAULT '{}'` | JSON details |
+| `created_at` | `TEXT NOT NULL` | Время |
 
 Индексы:
 
-- `idx_activity_created` по `(created_at DESC, id DESC)`;
-- `idx_activity_user` по `(user_id, created_at DESC)`.
+- `idx_activity_created`
+- `idx_activity_user`
 
-## Frontend Архитектура
+## Backend Services
 
-Ключевые файлы:
+### `NotesService`
 
-- `app/front/src/App.tsx` - главный контейнер приложения.
-- `app/front/src/api.ts` - typed API client.
-- `app/front/src/types.ts` - общие типы API.
-- `app/front/src/i18n.ts` - RU/EN словари.
-- `app/front/src/features/auth` - вход и auth hook.
-- `app/front/src/features/notes` - дерево, topbar, workspace hook.
-- `app/front/src/features/admin/AdminPanel.tsx` - панель администратора.
-- `app/front/src/editor` - Tiptap editor, toolbar, code block node view, link tooltip, code helpers, copy field.
-- `app/front/src/components` - общие UI-компоненты.
+Отвечает за заметки текущего пользователя:
 
-`App.tsx` держит:
+- `getTree(userId)`;
+- `getById(userId, id)`;
+- `create(userId, dto)`;
+- `update(userId, id, dto)`;
+- `move(userId, id, dto)`;
+- `delete(userId, id)`.
 
-- текущего пользователя;
-- guest language/theme;
-- выбранный режим workspace: `notes` или `admin`;
-- Tiptap editor;
-- режим редактора `Просмотр`/`Редактирование`;
-- модалки удаления и ссылки;
-- toast-alerting;
-- hotkeys.
+Все операции проверяют ownership через `user_id`. Move запрещает перенос в самого себя и в потомка.
 
-`Sidebar`:
+### `AdminService`
 
-- показывает компактный сайдбар с двумя режимами: дерево заметок и полноценное меню;
-- кнопка переключения режимов стоит на месте бывшего логотипа слева от заголовка, поэтому отдельная кнопка дополнительного меню не используется;
-- в режиме дерева показывает поиск, единую кнопку создания справа от поиска и дерево заметок;
-- в режиме меню скрывает поиск/директории и показывает группы разделов (`Заметки`, `Панель администратора`) и настроек (`Тема`, `Язык`) в области дерева;
-- в режиме меню использует компактные шрифты и иконки, не выводит правые статусы у разделов и показывает справа только значения темы/языка;
-- для пунктов меню применяет `TooltipText`, поэтому tooltip появляется только при фактическом ellipsis-обрезании;
-- создает заметку сразу с дефолтным названием, без модального окна: дочернюю для выделенной заметки или корневую при выделенном корне;
-- выбирает корень кликом по свободной области дерева без визуального выделения области;
-- позволяет переименовать заметку прямо в строке дерева через режим карандаш/сохранение;
-- позволяет удалить заметку из строки дерева через отдельную правую иконку;
-- переносит заметки в корень через drop в свободную область `tree-panel`; drop на конкретную строку дерева останавливает bubbling и переносит заметку в выбранного parent;
-- подсвечивает статус заметок цветом иконки пункта `Заметки` и кнопки меню вместо отдельного нижнего индикатора;
-- при клике по пункту `Заметки` из админки выбирает текущую или первую заметку через `selectFirstNote`, а при клике по конкретной строке дерева переводит workspace из `admin` в `notes`;
-- переключает язык и тему через inline-меню сайдбара без portal/popup;
-- открывает панель администратора, если `auth.user.role === 'admin'`;
-- не является источником безопасности, backend все равно проверяет роль.
+Отвечает за:
 
-`AdminPanel`:
+- список пользователей с `notesCount`;
+- создание пользователя;
+- изменение роли и пароля;
+- удаление пользователя;
+- статистику;
+- историю действий.
 
-- загружает пользователей, историю и статистику параллельно;
-- держит черновики редактирования только роли и нового пароля пользователя;
-- отправляет ошибки и успехи в toast-host через callbacks;
-- локализует action-коды истории.
-- использует список компактных пользовательских строк вместо широкой таблицы;
-- показывает логин существующего пользователя только для чтения;
-- показывает логин в отдельном визуальном бейдже без дублирования роли под ним;
-- прижимает управление ролью и паролем к левой части строки после короткого профиля;
-- прижимает действия сохранения и удаления к правому краю строки;
-- на mobile держит действия пользователя справа в верхней части карточки, а роль и пароль выносит во вторую строку;
-- переводит поля роли и пароля в одну колонку только на очень узких экранах;
-- показывает поиск и кнопку добавления в одной горизонтальной шапке списка пользователей;
-- растягивает поиск по всей доступной ширине, оставляя кнопку добавления справа на desktop и mobile;
-- выравнивает toolbar и список пользователей по одной вертикали без бокового inset внутри вкладки;
-- открывает создание пользователя в кастомной модалке;
-- фильтрует список пользователей по логину на клиенте;
-- использует кастомный dropdown-список роли;
-- фильтрует историю на клиенте через кастомные dropdown-фильтры с мультивыбором в заголовках колонок и сортирует ее по дате из заголовка таблицы;
-- показывает историю таблицей с пользователем, датой, действием, инициатором и целью;
-- использует смысловую `History`-иконку для вкладки истории и единые hover/active-состояния вкладок;
-- показывает статистику цветными KPI-плитками и аналитическими блоками с простыми CSS-графиками;
-- выравнивает содержимое статистики по одной вертикали с шапкой без бокового inset;
-- растягивает одиночную плитку статистики на всю строку в адаптивной сетке;
-- размещает описание KPI в верхней строке справа от иконки.
+Backend не дает удалить собственный admin-аккаунт и не дает оставить систему без единого admin.
 
-Общие UI-компоненты:
+### `ActivityService`
 
-- `CustomSelect` - кастомный dropdown с расчетом направления открытия по свободному месту на экране; меню рендерится через portal в `document.body`, поэтому не режется родительским overflow.
-- `Tooltip` - единая подсказка, рендерится через portal в `document.body` поверх модалок, dropdown и scroll-контейнеров.
-- `TooltipText` - общий ellipsis-текст, использует `Tooltip` для показа полного значения только при фактическом обрезании.
-- `ShortcutHint` - окно горячих клавиш в topbar, рендерится через portal в `document.body` поверх прочих окон.
-- `IconButton` - icon-only button с локализованным label; визуальная обертка строится на четкой matte-подложке, тонком border и цвете состояния без теней. Внешний browser outline отключен глобально, поэтому focus/keyboard-навигация не рисует системную рамку. Общая рамка группировки оставлена только у основных групп toolbar редактора заметок; дерево заметок, админка, одиночные действия и кнопки шапки заметки остаются без групповой подложки. SVG наследуют цвет обертки, а темная тема не использует черный контрастный цвет для primary/selected-иконок.
-- `Modal` - кастомные модальные окна без native dialog, с локальным presence-состоянием для плавного закрытия.
-- `ToastHost` - toast-alerting в правом верхнем углу с полупрозрачной поверхностью; `useToasts` вынесен отдельно и помечает toast как closing перед удалением.
+Записывает важные события:
 
-Редактор:
+- `auth.login`;
+- `notes.create`;
+- `notes.update`;
+- `notes.move`;
+- `notes.delete`;
+- `admin.user.create`;
+- `admin.user.update`;
+- `admin.user.delete`.
 
-- `useNotebookEditor` создает Tiptap editor с `editable: false`; `App.tsx` переключает `editor.setEditable(...)` по режиму просмотра/редактирования.
-- `RichTextToolbar` группирует действия по смыслу: режим, формат текста, блоки, вставки, undo/redo.
-- `CodeBlockWithTools` расширяет `CodeBlockLowlight` и подключает React node view.
-- `CodeBlockView` рендерит dropdown языка внутри code block в правом верхнем углу и обновляет `codeBlock.language`.
-- `codeLanguages.ts` содержит общий список языков для подсветки и переводов.
-- `EditorLinkTooltip` в режиме редактирования показывает `href` ссылки через portal tooltip, а в режиме просмотра открывает ссылки кликом.
-- `CopyField` реализует атомарный Tiptap node для обычных и секретных полей копирования. Тип поля хранится в `data-kind`, секретность в `data-secret`; тип выбирается через компактное icon-menu, пароль можно сгенерировать через `crypto.getRandomValues`, в preview секретные значения маскируются, но исходное значение остается в HTML заметки.
+`list(limit)` нормализует limit в диапазон `1..200`.
 
-## Потоки Данных
+## Frontend
 
-### Вход
+### Основные файлы
 
-1. Пользователь отправляет логин и пароль.
-2. Frontend вызывает `authApi.login`.
-3. Backend проверяет пароль.
-4. Backend обновляет `last_login_at`.
-5. Backend пишет `auth.login`.
-6. Frontend сохраняет token и user.
+- `src/App.tsx` - легкий bootstrap/auth слой: login screen, guest theme/language, toast-host и lazy-загрузка рабочей области после входа.
+- `features/app/AuthenticatedApp.tsx` - рабочая область после авторизации: notes workspace, editor, sidebar, модалки заметок и lazy-загрузка админки.
+- `src/api.ts` - typed API client и Bearer token.
+- `src/i18n.ts` - RU/EN словарь.
+- `src/types.ts` - общие frontend-типы.
+- `src/styles.css` - дизайн-токены, темы и компоненты.
+- `public/favicon.svg` - фавиконка приложения; читаемый размер в браузерной вкладке задается `viewBox` с сохранением всего контура без обрезки, Vite копирует файл в корень backend static build.
 
-### Создание Заметки
+### Компоненты
 
-1. Пользователь нажимает единую иконку создания заметки в сайдбаре.
-2. Frontend вызывает `POST /api/notes`.
-3. Backend берет `userId` из токена.
-4. Frontend передает `parentId` выбранной заметки или `null`, если выбран корень.
-5. Backend проверяет parent внутри этого userId.
-6. Backend создает заметку с `user_id` и дефолтным названием, переданным frontend.
-7. Backend пишет `notes.create`.
-8. Frontend обновляет дерево и выбирает новую заметку.
-9. Пользователь может переименовать ее inline в строке дерева через `PATCH /api/notes/:id`.
+- `components/IconButton.tsx` - icon-only button с tooltip label.
+- `components/CustomSelect.tsx` - кастомный dropdown через portal.
+- `components/Tooltip.tsx` и `TooltipText.tsx` - единый tooltip-слой.
+- `components/Modal.tsx` - кастомные модалки.
+- `components/ToastHost.tsx` и `useToasts.ts` - toast-alerting.
+- `components/AmbientCubes.tsx` - декоративный слой фоновых кубов и частиц, все изображения/формы задаются кодом.
 
-### Управление Пользователем
+### Notes Feature
 
-1. Admin открывает админку.
-2. Frontend вызывает `GET /api/admin/users`, `GET /api/admin/activity`, `GET /api/admin/stats`.
-3. Backend проверяет Bearer token и роль `admin`.
-4. Admin создает пользователя, меняет роль или пароль существующего пользователя, либо удаляет пользователя.
-5. Backend пишет соответствующее `admin.user.*` событие.
-6. Frontend перезагружает данные админки.
+- `features/notes/useNotesWorkspace.ts` - загрузка дерева, выбранная заметка, draft, CRUD, drag-and-drop move.
+- `features/notes/Sidebar.tsx` - дерево, поиск, переключение на меню, настройки, выход.
+- `features/notes/NotesTree.tsx` - рекурсивное дерево, inline rename, delete, drag-and-drop.
+- `features/notes/Topbar.tsx` - шапка заметки.
+- `features/notes/useAppShortcuts.ts` - глобальные hotkeys и список подсказок.
 
-### Удаление Пользователя
+### Editor
 
-1. Admin вызывает `DELETE /api/admin/users/:id`.
-2. Backend запрещает удалить самого себя.
-3. Backend пишет `admin.user.delete`.
-4. Backend удаляет строку `users`.
-5. SQLite каскадно удаляет `notes` пользователя.
-6. `activity_logs.user_id` для удаленного пользователя становится `null`.
+- `editor/useNotebookEditor.ts` - создание Tiptap editor.
+- `editor/lowlight.ts` - lowlight instance с явным набором highlight.js grammars под поддерживаемые языки вместо импорта всего набора `all`.
+- `editor/RichTextToolbar.tsx` - toolbar редактора.
+- `editor/CodeBlockView.tsx` - кастомный code block: язык, форматирование, нумерация строк.
+- `editor/editorCode.ts` - форматирование code block и selection-логика.
+- `editor/copyFieldLabels.ts` - labels для copy fields.
+- `editor/CopyField.tsx` - атомарное поле копирования, secret-маскирование, генерация пароля.
+- `editor/CopyFieldKindMenu.tsx` - compact type menu.
+- `editor/EditorLinkTooltip.tsx` - tooltip ссылок в режиме редактирования.
+
+`Ctrl+A` внутри code block перехватывается в node-view и в `editorProps.handleKeyDown`, поэтому выделяет только текст кода.
+
+### Admin Feature
+
+- `features/admin/AdminPanel.tsx` - контейнер админки, загружается через `React.lazy()` только при открытии панели администратора.
+- `features/admin/ActivityColumnFilter.tsx` - portal-фильтр таблицы истории.
+- `features/admin/adminFilters.ts` - типы и empty state фильтров.
+
+Админка показывает:
+
+- вкладку пользователей;
+- вкладку истории действий;
+- вкладку статистики.
+
+## Frontend Code Splitting
+
+Frontend использует route/code splitting через `React.lazy()` и `Suspense`:
+
+- стартовый bundle содержит auth/login, базовые UI-компоненты и toast;
+- рабочая область `AuthenticatedApp` загружается отдельным chunk только после авторизации;
+- Tiptap editor, lowlight и notes workspace не попадают в login bundle;
+- `AdminPanel` загружается отдельным chunk только при переходе в панель администратора.
+- `vite.config.ts` дополнительно выделяет `editor-vendor`, `code-languages`, `icons` и общий `vendor` через `manualChunks`, чтобы тяжелые зависимости редактора и grammar-файлы не склеивались с прикладным кодом.
+- Подсветка кода импортирует только нужные grammars highlight.js; языки без отдельной grammar продолжают уходить в auto/plain fallback.
+
+Fallback для lazy-загрузки использует существующий компактный loader, поэтому поведение UI не меняется.
+
+## Дизайн
+
+- Есть светлая и темная темы.
+- Токены цветов, размеров, радиусов, motion и z-index централизованы в `styles.css`.
+- Базовая типографика вынесена в `--font-sans`; интерфейс использует стек `Aptos` / `Segoe UI Variable` / `Segoe UI` без внешней загрузки шрифтов.
+- Основной фон светлой темы задан спокойным холодным почти-белым токеном `--bg`, чтобы панели и декоративные элементы не спорили с рабочей областью.
+- Основной фон темной темы задан глубоким индиго-графитовым токеном `--bg`, без цветных фоновых слоев.
+- Основной рабочий блок и sidebar используют отдельный `--layout-shadow`: плотную тонкую тень справа и снизу, подобранную близко к фону темы; остальные элементы остаются без теней.
+- Light theme отдельно усиливает `--cube-line`, `--cube-fill`, `--cube-spark` и opacity/stroke декоративных SVG-кубов, чтобы они не терялись на светлом фоне.
+- Native `alert`, `prompt`, `confirm` не используются.
+- Dropdown, tooltip, modal и toast кастомные.
+- Tooltip и dropdown рендерятся через portal, чтобы не обрезаться родительскими overflow.
+- Изображения документации и дизайн-референсы лежат только в `docs/images`.
+
+## Runtime Данные
+
+Не являются исходниками:
+
+- `*.sqlite`
+- `*.sqlite-wal`
+- `*.sqlite-shm`
+- `*.tsbuildinfo`
+- `test-results`
+- `dist`
+- `public`

@@ -185,7 +185,9 @@ export class NotesService {
 
   delete(userId: number, id: number): { id: number } {
     const note = this.requireNote(userId, id);
-    this.databaseService.connection.prepare('DELETE FROM notes WHERE id = @id AND user_id = @userId').run({ id, userId });
+    this.databaseService.connection
+      .prepare('DELETE FROM notes WHERE id = @id AND user_id = @userId')
+      .run({ id, userId });
     this.activityService.record({
       actorId: userId,
       userId,
@@ -215,7 +217,9 @@ export class NotesService {
       parentId === null
         ? 'SELECT COALESCE(MAX(position), -1) + 1 as position FROM notes WHERE user_id = @userId AND parent_id IS NULL'
         : 'SELECT COALESCE(MAX(position), -1) + 1 as position FROM notes WHERE user_id = @userId AND parent_id = @parentId';
-    const row = this.databaseService.connection.prepare(sql).get({ userId, parentId }) as { position: number };
+    const row = this.databaseService.connection.prepare(sql).get({ userId, parentId }) as {
+      position: number;
+    };
 
     return row.position;
   }

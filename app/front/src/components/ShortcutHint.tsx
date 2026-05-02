@@ -82,11 +82,28 @@ export function ShortcutHint({ label, items }: ShortcutHintProps) {
   useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
 
   return (
-    <div className="shortcut-hint" ref={rootRef} onBlur={scheduleClose} onFocus={openPanel} onPointerEnter={openPanel} onPointerLeave={scheduleClose}>
-      <IconButton label={label} icon={<Keyboard size={16} />} onClick={() => setIsOpen((current) => !current)} />
+    <div
+      className="shortcut-hint"
+      ref={rootRef}
+      onBlur={scheduleClose}
+      onFocus={openPanel}
+      onPointerEnter={openPanel}
+      onPointerLeave={scheduleClose}
+    >
+      <IconButton
+        label={label}
+        icon={<Keyboard size={16} />}
+        onClick={() => setIsOpen((current) => !current)}
+      />
       {isOpen
         ? createPortal(
-            <div className="shortcut-hint__panel" role="tooltip" style={panelStyle} onPointerEnter={openPanel} onPointerLeave={scheduleClose}>
+            <div
+              className="shortcut-hint__panel"
+              role="tooltip"
+              style={panelStyle}
+              onPointerEnter={openPanel}
+              onPointerLeave={scheduleClose}
+            >
               {items.map((item) => (
                 <div className="shortcut-hint__row" key={`${item.label}-${item.keys.join('-')}`}>
                   <span>{item.label}</span>

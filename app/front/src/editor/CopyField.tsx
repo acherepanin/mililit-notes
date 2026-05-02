@@ -48,7 +48,12 @@ function maskSecret(value: string): string {
 
 function generatePassword(length = 18): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*_-+=';
-  const required = ['ABCDEFGHJKLMNPQRSTUVWXYZ', 'abcdefghijkmnopqrstuvwxyz', '23456789', '!@#$%^&*_-+='];
+  const required = [
+    'ABCDEFGHJKLMNPQRSTUVWXYZ',
+    'abcdefghijkmnopqrstuvwxyz',
+    '23456789',
+    '!@#$%^&*_-+=',
+  ];
   const random = new Uint32Array(length);
   crypto.getRandomValues(random);
   const chars = Array.from(random, (value) => alphabet[value % alphabet.length]);
@@ -113,7 +118,9 @@ function createCopyFieldView(labels: CopyFieldLabels) {
           kind={kind}
           labels={labels}
           disabled={!isEditable}
-          onChange={(nextKind) => updateAttributes({ kind: nextKind, secret: isSecretKind(nextKind) })}
+          onChange={(nextKind) =>
+            updateAttributes({ kind: nextKind, secret: isSecretKind(nextKind) })
+          }
         />
         <input
           className="copy-field__label"
@@ -134,13 +141,23 @@ function createCopyFieldView(labels: CopyFieldLabels) {
         />
         {canGeneratePassword ? (
           <Tooltip label={labels.generatePassword}>
-            <button className="copy-field__button copy-field__button--generate" type="button" onClick={generateValue} aria-label={labels.generatePassword}>
+            <button
+              className="copy-field__button copy-field__button--generate"
+              type="button"
+              onClick={generateValue}
+              aria-label={labels.generatePassword}
+            >
               <Sparkles size={15} />
             </button>
           </Tooltip>
         ) : null}
         <Tooltip label={copied ? labels.copiedLabel : labels.copy}>
-          <button className="copy-field__button" type="button" onClick={copyValue} aria-label={copied ? labels.copiedLabel : labels.copy}>
+          <button
+            className="copy-field__button"
+            type="button"
+            onClick={copyValue}
+            aria-label={copied ? labels.copiedLabel : labels.copy}
+          >
             {copied ? <Check size={16} /> : <Clipboard size={16} />}
           </button>
         </Tooltip>

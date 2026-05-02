@@ -1,4 +1,17 @@
-import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import type { ActivityResponse } from '../activity/activity.types';
 import { AdminGuard } from '../auth/admin.guard';
@@ -33,7 +46,10 @@ export class AdminController {
   }
 
   @Delete('users/:id')
-  deleteUser(@Req() request: AuthenticatedRequest, @Param('id', ParseIntPipe) id: number): { id: number } {
+  deleteUser(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): { id: number } {
     return this.adminService.deleteUser(request.user.id, id);
   }
 

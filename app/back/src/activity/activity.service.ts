@@ -7,7 +7,14 @@ import type { ActivityRecord, ActivityResponse, RecordActivityParams } from './a
 export class ActivityService {
   constructor(@Inject(DatabaseService) private readonly databaseService: DatabaseService) {}
 
-  record({ actorId, userId, action, targetType, targetId, details = {} }: RecordActivityParams): void {
+  record({
+    actorId,
+    userId,
+    action,
+    targetType,
+    targetId,
+    details = {},
+  }: RecordActivityParams): void {
     this.databaseService.connection
       .prepare(
         `

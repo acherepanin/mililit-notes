@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import { AuthGuard, type AuthenticatedRequest } from '../auth/auth.guard';
 import { CreateNoteDto } from './dto/create-note.dto';
@@ -18,7 +30,10 @@ export class NotesController {
   }
 
   @Get(':id')
-  getById(@Req() request: AuthenticatedRequest, @Param('id', ParseIntPipe) id: number): NoteResponse {
+  getById(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): NoteResponse {
     return this.notesService.getById(request.user.id, id);
   }
 
@@ -28,17 +43,28 @@ export class NotesController {
   }
 
   @Patch(':id')
-  update(@Req() request: AuthenticatedRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateNoteDto): NoteResponse {
+  update(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateNoteDto,
+  ): NoteResponse {
     return this.notesService.update(request.user.id, id, dto);
   }
 
   @Patch(':id/move')
-  move(@Req() request: AuthenticatedRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: MoveNoteDto): NoteResponse {
+  move(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MoveNoteDto,
+  ): NoteResponse {
     return this.notesService.move(request.user.id, id, dto);
   }
 
   @Delete(':id')
-  delete(@Req() request: AuthenticatedRequest, @Param('id', ParseIntPipe) id: number): { id: number } {
+  delete(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): { id: number } {
     return this.notesService.delete(request.user.id, id);
   }
 }

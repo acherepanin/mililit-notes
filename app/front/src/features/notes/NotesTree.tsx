@@ -64,7 +64,12 @@ export function NotesTree({
       const isEditing = editingId === node.id;
 
       return (
-        <li className="tree__item" key={node.id} role="treeitem" aria-expanded={hasChildren ? isExpanded : undefined}>
+        <li
+          className="tree__item"
+          key={node.id}
+          role="treeitem"
+          aria-expanded={hasChildren ? isExpanded : undefined}
+        >
           <div
             className={`tree__row ${isActive ? 'tree__row--active' : ''} ${draggedId === node.id ? 'tree__row--dragging' : ''}`}
             draggable={!isEditing}
@@ -91,7 +96,15 @@ export function NotesTree({
               aria-label={isExpanded ? t('collapse') : t('expand')}
               disabled={!hasChildren}
             >
-              {hasChildren ? isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : <FileText size={13} />}
+              {hasChildren ? (
+                isExpanded ? (
+                  <ChevronDown size={13} />
+                ) : (
+                  <ChevronRight size={13} />
+                )
+              ) : (
+                <FileText size={13} />
+              )}
             </button>
 
             {isEditing ? (
@@ -129,7 +142,12 @@ export function NotesTree({
                   disabled={!draftName.trim()}
                 />
               ) : (
-                <IconButton label={t('editName')} icon={<Pencil size={13} />} className="tree__action" onClick={() => startEditing(node)} />
+                <IconButton
+                  label={t('editName')}
+                  icon={<Pencil size={13} />}
+                  className="tree__action"
+                  onClick={() => startEditing(node)}
+                />
               )}
               <IconButton
                 label={t('delete')}
@@ -141,7 +159,11 @@ export function NotesTree({
             </div>
           </div>
 
-          {hasChildren && isExpanded ? <ul className="tree" role="group">{renderNodes(node.children)}</ul> : null}
+          {hasChildren && isExpanded ? (
+            <ul className="tree" role="group">
+              {renderNodes(node.children)}
+            </ul>
+          ) : null}
         </li>
       );
     });

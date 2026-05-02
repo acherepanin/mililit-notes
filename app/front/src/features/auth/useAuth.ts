@@ -51,11 +51,14 @@ export function useAuth() {
     setApiToken(null);
   }, []);
 
-  const updatePreferences = useCallback(async (payload: { language?: UserLanguage; theme?: UserTheme }) => {
-    const nextUser = await authApi.updatePreferences(payload);
-    setUser(nextUser);
-    return nextUser;
-  }, []);
+  const updatePreferences = useCallback(
+    async (payload: { language?: UserLanguage; theme?: UserTheme }) => {
+      const nextUser = await authApi.updatePreferences(payload);
+      setUser(nextUser);
+      return nextUser;
+    },
+    [],
+  );
 
   return {
     token,

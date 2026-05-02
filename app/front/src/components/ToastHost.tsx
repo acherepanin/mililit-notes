@@ -21,10 +21,17 @@ export function ToastHost({
   return (
     <div className="toast-host" aria-live="polite">
       {toasts.map((toast) => (
-        <div className={`toast toast--${toast.kind} ${toast.isClosing ? 'toast--closing' : ''}`} key={toast.id}>
+        <div
+          className={`toast toast--${toast.kind} ${toast.isClosing ? 'toast--closing' : ''}`}
+          key={toast.id}
+        >
           <span className="toast__icon">{icons[toast.kind]}</span>
           <span className="toast__message">{toast.message}</span>
-          <IconButton label={closeLabel} icon={<X size={14} />} onClick={() => onDismiss(toast.id)} />
+          <IconButton
+            label={closeLabel}
+            icon={<X size={14} />}
+            onClick={() => onDismiss(toast.id)}
+          />
         </div>
       ))}
     </div>

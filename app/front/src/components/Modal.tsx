@@ -55,8 +55,18 @@ export function Modal({ isOpen, title, closeLabel, children, onClose }: ModalPro
   }
 
   return (
-    <div className={`modal-layer ${isClosing ? 'modal-layer--closing' : ''}`} role="presentation" onMouseDown={onClose}>
-      <section className="modal-panel" role="dialog" aria-modal="true" aria-label={title} onMouseDown={(event) => event.stopPropagation()}>
+    <div
+      className={`modal-layer ${isClosing ? 'modal-layer--closing' : ''}`}
+      role="presentation"
+      onMouseDown={onClose}
+    >
+      <section
+        className="modal-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <header className="modal-panel__head">
           <h2>{title}</h2>
           <IconButton label={closeLabel} icon={<X size={16} />} onClick={onClose} />

@@ -1,6 +1,7 @@
 import { ArrowRight, Languages, Lock, Moon, Sun, UserRound } from 'lucide-react';
 import { useState } from 'react';
 
+import { AmbientCubes } from '../../components/AmbientCubes';
 import { IconButton } from '../../components/IconButton';
 import { Tooltip } from '../../components/Tooltip';
 import type { Translator } from '../../i18n';
@@ -30,6 +31,7 @@ export function LoginScreen({
 
   return (
     <main className="auth-stage">
+      <AmbientCubes area="auth" />
       <section className="auth-panel">
         <div className="auth-panel__mark">N</div>
         <h1>{t('loginTitle')}</h1>
@@ -42,7 +44,12 @@ export function LoginScreen({
         >
           <label className="field-shell">
             <UserRound size={16} />
-            <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder={t('username')} autoComplete="username" />
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder={t('username')}
+              autoComplete="username"
+            />
           </label>
           <label className="field-shell">
             <Lock size={16} />
@@ -66,7 +73,12 @@ export function LoginScreen({
               onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
             />
             <Tooltip label={t('signIn')}>
-              <button className="auth-submit" type="submit" aria-label={t('signIn')} disabled={isLoading}>
+              <button
+                className="auth-submit"
+                type="submit"
+                aria-label={t('signIn')}
+                disabled={isLoading}
+              >
                 <ArrowRight size={22} />
               </button>
             </Tooltip>

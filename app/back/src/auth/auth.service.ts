@@ -1,6 +1,5 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import { ActivityService } from '../activity/activity.service';
 import { readPositiveInteger } from '../config/env';
@@ -9,14 +8,7 @@ import { verifyPassword } from './password';
 import type { AuthUser, TokenPayload, UserLanguage, UserRecord, UserTheme } from './auth.types';
 import type { LoginDto } from './dto/login.dto';
 import type { UpdatePreferencesDto } from './dto/update-preferences.dto';
-
-function toBase64Url(value: string): string {
-  return Buffer.from(value).toString('base64url');
-}
-
-function fromBase64Url(value: string): string {
-  return Buffer.from(value, 'base64url').toString('utf8');
-}
+import { createSignedToken, readSignedToken } from './token';
 
 const defaultTokenTtlSeconds = 60 * 60 * 24 * 14;
 const defaultTokenSecret = 'dev-notes-change-this-secret';
@@ -50,7 +42,9 @@ export class AuthService {
     const authUser = this.mapUser(user);
     const now = new Date().toISOString();
     this.databaseService.connection
-      .prepare('UPDATE users SET last_login_at = @lastLoginAt, updated_at = @lastLoginAt WHERE id = @id')
+      .prepare(
+        'UPDATE users SET last_login_at = @lastLoginAt, updated_at = @lastLoginAt WHERE id = @id',
+      )
       .run({ id: authUser.id, lastLoginAt: now });
     this.activityService.record({
       actorId: authUser.id,
@@ -67,9 +61,9 @@ export class AuthService {
   }
 
   getUser(id: number): AuthUser {
-    const user = this.databaseService.connection.prepare('SELECT * FROM users WHERE id = ?').get(id) as
-      | UserRecord
-      | undefined;
+    const user = this.databaseService.connection
+      .prepare('SELECT * FROM users WHERE id = ?')
+      .get(id) as UserRecord | undefined;
 
     if (!user) {
       throw new UnauthorizedException('User was not found');
@@ -102,27 +96,13 @@ export class AuthService {
   }
 
   verifyToken(token: string): AuthUser {
-    const [encodedPayload, signature] = token.split('.');
-    if (!encodedPayload || !signature) {
+    const payload = readSignedToken(token, this.tokenSecret);
+
+    if (!payload) {
       throw new UnauthorizedException('Invalid token');
     }
 
-    const expectedSignature = this.sign(encodedPayload);
-    const received = Buffer.from(signature);
-    const expected = Buffer.from(expectedSignature);
-
-    if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
-      throw new UnauthorizedException('Invalid token');
-    }
-
-    let payload: TokenPayload;
-    try {
-      payload = JSON.parse(fromBase64Url(encodedPayload)) as TokenPayload;
-    } catch {
-      throw new UnauthorizedException('Invalid token');
-    }
-
-    if (!Number.isInteger(payload.sub) || typeof payload.exp !== 'number' || payload.exp < Math.floor(Date.now() / 1000)) {
+    if (payload.exp < Math.floor(Date.now() / 1000)) {
       throw new UnauthorizedException('Token expired');
     }
 
@@ -136,13 +116,7 @@ export class AuthService {
       role: user.role,
       exp: Math.floor(Date.now() / 1000) + this.tokenTtlSeconds,
     };
-    const encodedPayload = toBase64Url(JSON.stringify(payload));
-
-    return `${encodedPayload}.${this.sign(encodedPayload)}`;
-  }
-
-  private sign(encodedPayload: string): string {
-    return createHmac('sha256', this.tokenSecret).update(encodedPayload).digest('base64url');
+    return createSignedToken(payload, this.tokenSecret);
   }
 
   private mapUser(user: UserRecord): AuthUser {

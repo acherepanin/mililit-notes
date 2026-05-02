@@ -1,13 +1,12 @@
 import Placeholder from '@tiptap/extension-placeholder';
 import { useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { all, createLowlight } from 'lowlight';
 import { useMemo } from 'react';
 
 import { CodeBlockWithTools } from './codeBlockExtension';
 import { createCopyField, type CopyFieldLabels } from './CopyField';
-
-const lowlight = createLowlight(all);
+import { isSelectAllShortcut, selectCurrentCodeBlockText } from './editorCode';
+import { lowlight } from './lowlight';
 
 interface UseNotebookEditorParams {
   onContentChange: (contentHtml: string, contentText: string) => void;
@@ -55,6 +54,8 @@ export function useNotebookEditor({
         attributes: {
           class: 'editor-surface',
         },
+        handleKeyDown: (view, event) =>
+          isSelectAllShortcut(event) ? selectCurrentCodeBlockText(view) : false,
       },
       onUpdate: ({ editor }) => {
         onContentChange(editor.getHTML(), editor.getText());

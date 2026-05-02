@@ -1,7 +1,22 @@
-import { Activity, ArrowDownUp, BarChart3, Check, History, KeyRound, ListFilter, Menu, NotebookText, RefreshCw, Save, Search, Shield, Trash2, UserPlus, UsersRound, Zap } from 'lucide-react';
+import {
+  Activity,
+  ArrowDownUp,
+  BarChart3,
+  History,
+  KeyRound,
+  Menu,
+  NotebookText,
+  RefreshCw,
+  Save,
+  Search,
+  Shield,
+  Trash2,
+  UserPlus,
+  UsersRound,
+  Zap,
+} from 'lucide-react';
 import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { adminApi } from '../../api';
 import { CustomSelect } from '../../components/CustomSelect';
@@ -9,12 +24,24 @@ import { IconButton } from '../../components/IconButton';
 import { Modal } from '../../components/Modal';
 import { TooltipText } from '../../components/TooltipText';
 import type { Translator } from '../../i18n';
-import type { ActivityLog, AdminStats, AdminUser, CreateAdminUserPayload, UpdateAdminUserPayload, UserLanguage, UserRole } from '../../types';
+import type {
+  ActivityLog,
+  AdminStats,
+  AdminUser,
+  CreateAdminUserPayload,
+  UpdateAdminUserPayload,
+  UserLanguage,
+  UserRole,
+} from '../../types';
+import { ActivityColumnFilter } from './ActivityColumnFilter';
+import {
+  emptyActivityFilters,
+  type ActivityFilterKey,
+  type ActivityFilters,
+  type ActivitySort,
+} from './adminFilters';
 
 type AdminTab = 'users' | 'activity' | 'stats';
-type ActivitySort = 'newest' | 'oldest';
-type ActivityFilterKey = 'user' | 'action' | 'actor' | 'target';
-type ActivityFilters = Record<ActivityFilterKey, string[]>;
 
 interface AdminPanelProps {
   currentUserId: number;
@@ -31,133 +58,14 @@ const emptyCreateForm: CreateAdminUserPayload = {
   role: 'user',
 };
 
-const emptyActivityFilters: ActivityFilters = {
-  user: [],
-  action: [],
-  actor: [],
-  target: [],
-};
-
-interface ActivityColumnFilterProps {
-  label: string;
-  emptyLabel: string;
-  options: string[];
-  selected: string[];
-  onClear: () => void;
-  onToggle: (value: string) => void;
-}
-
-function ActivityColumnFilter({ label, emptyLabel, options, selected, onClear, onToggle }: ActivityColumnFilterProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const selectedSet = useMemo(() => new Set(selected), [selected]);
-
-  const updatePosition = useCallback(() => {
-    const button = buttonRef.current;
-    if (!button) {
-      return;
-    }
-
-    const rect = button.getBoundingClientRect();
-    const menuWidth = 218;
-    setMenuStyle({
-      left: Math.min(Math.max(rect.right - menuWidth, 10), window.innerWidth - menuWidth - 10),
-      top: rect.bottom + 6,
-      width: menuWidth,
-      maxHeight: Math.max(140, Math.min(300, window.innerHeight - rect.bottom - 16)),
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    updatePosition();
-  }, [isOpen, updatePosition]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    const closeOnOutside = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!buttonRef.current?.contains(target) && !menuRef.current?.contains(target)) {
-        setIsOpen(false);
-      }
-    };
-
-    document.addEventListener('pointerdown', closeOnOutside);
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutside);
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [isOpen, updatePosition]);
-
-  return (
-    <>
-      <button
-        className={`activity-table__filter ${selected.length > 0 ? 'activity-table__filter--active' : ''}`}
-        type="button"
-        aria-label={label}
-        aria-expanded={isOpen}
-        ref={buttonRef}
-        onClick={() => setIsOpen((current) => !current)}
-      >
-        <ListFilter size={13} />
-        {selected.length > 0 ? <span>{selected.length}</span> : null}
-      </button>
-      {isOpen
-        ? createPortal(
-            <div className="activity-filter-menu" ref={menuRef} style={menuStyle}>
-              <div className="activity-filter-menu__head">
-                <div>
-                  <ListFilter size={13} />
-                  <span>{label}</span>
-                </div>
-                {selected.length > 0 ? (
-                  <button type="button" onClick={onClear}>
-                    {emptyLabel}
-                  </button>
-                ) : null}
-              </div>
-              <div className="activity-filter-menu__options">
-                {options.length > 0 ? (
-                  options.map((option) => {
-                    const isSelected = selectedSet.has(option);
-
-                    return (
-                      <button
-                        className={isSelected ? 'activity-filter-menu__option activity-filter-menu__option--selected' : 'activity-filter-menu__option'}
-                        type="button"
-                        key={option}
-                        onClick={() => onToggle(option)}
-                      >
-                        <TooltipText value={option} />
-                        {isSelected ? <Check size={13} /> : <i />}
-                      </button>
-                    );
-                  })
-                ) : (
-                  <span className="activity-filter-menu__empty">{emptyLabel}</span>
-                )}
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
-    </>
-  );
-}
-
-export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError, onSuccess }: AdminPanelProps) {
+export function AdminPanel({
+  currentUserId,
+  t,
+  language,
+  onOpenSidebar,
+  onError,
+  onSuccess,
+}: AdminPanelProps) {
   const [tab, setTab] = useState<AdminTab>('users');
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [activity, setActivity] = useState<ActivityLog[]>([]);
@@ -287,7 +195,9 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
   const toggleActivityFilter = (key: ActivityFilterKey, value: string) => {
     setActivityFilters((current) => {
       const selected = current[key];
-      const nextSelected = selected.includes(value) ? selected.filter((item) => item !== value) : [...selected, value];
+      const nextSelected = selected.includes(value)
+        ? selected.filter((item) => item !== value)
+        : [...selected, value];
 
       return { ...current, [key]: nextSelected };
     });
@@ -300,11 +210,36 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
     () =>
       stats
         ? [
-            { icon: <UsersRound size={17} />, label: t('adminUsers'), tone: 'blue', value: stats.usersTotal },
-            { icon: <Shield size={17} />, label: t('adminAdmins'), tone: 'violet', value: stats.adminsTotal },
-            { icon: <NotebookText size={17} />, label: t('adminNotes'), tone: 'cyan', value: stats.notesTotal },
-            { icon: <Activity size={17} />, label: t('adminEvents'), tone: 'amber', value: stats.activityTotal },
-            { icon: <Zap size={17} />, label: t('adminActiveToday'), tone: 'rose', value: stats.activeUsersToday },
+            {
+              icon: <UsersRound size={17} />,
+              label: t('adminUsers'),
+              tone: 'blue',
+              value: stats.usersTotal,
+            },
+            {
+              icon: <Shield size={17} />,
+              label: t('adminAdmins'),
+              tone: 'violet',
+              value: stats.adminsTotal,
+            },
+            {
+              icon: <NotebookText size={17} />,
+              label: t('adminNotes'),
+              tone: 'cyan',
+              value: stats.notesTotal,
+            },
+            {
+              icon: <Activity size={17} />,
+              label: t('adminEvents'),
+              tone: 'amber',
+              value: stats.activityTotal,
+            },
+            {
+              icon: <Zap size={17} />,
+              label: t('adminActiveToday'),
+              tone: 'rose',
+              value: stats.activeUsersToday,
+            },
           ]
         : [],
     [stats, t],
@@ -320,14 +255,20 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
   }, [userSearch, users]);
   const activityRows = useMemo(() => {
     const query = activitySearch.trim().toLowerCase();
-    const matchesFilter = (key: ActivityFilterKey, value: string) => activityFilters[key].length === 0 || activityFilters[key].includes(value);
+    const matchesFilter = (key: ActivityFilterKey, value: string) =>
+      activityFilters[key].length === 0 || activityFilters[key].includes(value);
     const filtered = activity.filter((item) => {
       const user = item.userUsername ?? item.actorUsername ?? t('adminUnknownUser');
       const action = getActivityActionLabel(item.action);
       const actor = item.actorUsername ?? '-';
       const target = `${item.targetType}${item.targetId ? ` #${item.targetId}` : ''}`;
 
-      if (!matchesFilter('user', user) || !matchesFilter('action', action) || !matchesFilter('actor', actor) || !matchesFilter('target', target)) {
+      if (
+        !matchesFilter('user', user) ||
+        !matchesFilter('action', action) ||
+        !matchesFilter('actor', actor) ||
+        !matchesFilter('target', target)
+      ) {
         return false;
       }
 
@@ -346,13 +287,18 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
     });
   }, [activity, activityFilters, activitySearch, activitySort, getActivityActionLabel, t]);
   const activityFilterOptions = useMemo(() => {
-    const unique = (values: string[]) => Array.from(new Set(values)).sort((left, right) => left.localeCompare(right, language));
+    const unique = (values: string[]) =>
+      Array.from(new Set(values)).sort((left, right) => left.localeCompare(right, language));
 
     return {
-      user: unique(activity.map((item) => item.userUsername ?? item.actorUsername ?? t('adminUnknownUser'))),
+      user: unique(
+        activity.map((item) => item.userUsername ?? item.actorUsername ?? t('adminUnknownUser')),
+      ),
       action: unique(activity.map((item) => getActivityActionLabel(item.action))),
       actor: unique(activity.map((item) => item.actorUsername ?? '-')),
-      target: unique(activity.map((item) => `${item.targetType}${item.targetId ? ` #${item.targetId}` : ''}`)),
+      target: unique(
+        activity.map((item) => `${item.targetType}${item.targetId ? ` #${item.targetId}` : ''}`),
+      ),
     };
   }, [activity, getActivityActionLabel, language, t]);
   const statsDerived = useMemo(() => {
@@ -367,7 +313,8 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
       adminPercent: Math.round((stats.adminsTotal / usersTotal) * 100),
       activePercent: Math.round((stats.activeUsersToday / usersTotal) * 100),
       notesPerUser: stats.usersTotal > 0 ? (stats.notesTotal / stats.usersTotal).toFixed(1) : '0',
-      eventsPerUser: stats.usersTotal > 0 ? (stats.activityTotal / stats.usersTotal).toFixed(1) : '0',
+      eventsPerUser:
+        stats.usersTotal > 0 ? (stats.activityTotal / stats.usersTotal).toFixed(1) : '0',
       notesWidth: `${Math.max(4, Math.round((stats.notesTotal / maxVolume) * 100))}%`,
       eventsWidth: `${Math.max(4, Math.round((stats.activityTotal / maxVolume) * 100))}%`,
     };
@@ -381,19 +328,44 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
           <h2>{t('adminPanel')}</h2>
         </div>
         <div className="admin-panel__actions">
-          <IconButton label={t('menu')} icon={<Menu size={17} />} onClick={onOpenSidebar} className="admin-panel__menu" />
-          <IconButton label={t('refresh')} icon={<RefreshCw size={16} />} onClick={() => void loadAdminData()} disabled={isLoading} />
+          <IconButton
+            label={t('menu')}
+            icon={<Menu size={17} />}
+            onClick={onOpenSidebar}
+            className="admin-panel__menu"
+          />
+          <IconButton
+            label={t('refresh')}
+            icon={<RefreshCw size={16} />}
+            onClick={() => void loadAdminData()}
+            disabled={isLoading}
+          />
         </div>
       </header>
 
       <div className="admin-tabs">
-        <button className={tab === 'users' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'} onClick={() => setTab('users')}>
+        <button
+          className={
+            tab === 'users' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
+          }
+          onClick={() => setTab('users')}
+        >
           <UsersRound size={15} /> {t('adminUsers')}
         </button>
-        <button className={tab === 'activity' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'} onClick={() => setTab('activity')}>
+        <button
+          className={
+            tab === 'activity' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
+          }
+          onClick={() => setTab('activity')}
+        >
           <History size={15} /> {t('adminActivity')}
         </button>
-        <button className={tab === 'stats' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'} onClick={() => setTab('stats')}>
+        <button
+          className={
+            tab === 'stats' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
+          }
+          onClick={() => setTab('stats')}
+        >
           <BarChart3 size={15} /> {t('adminStats')}
         </button>
       </div>
@@ -403,16 +375,29 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
           <div className="admin-users-toolbar">
             <label className="admin-search-field">
               <Search size={15} />
-              <input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder={t('search')} aria-label={t('adminSearchUsers')} />
+              <input
+                value={userSearch}
+                onChange={(event) => setUserSearch(event.target.value)}
+                placeholder={t('search')}
+                aria-label={t('adminSearchUsers')}
+              />
             </label>
-            <IconButton label={t('adminCreateUser')} icon={<UserPlus size={16} />} variant="primary" onClick={() => setIsCreateOpen(true)} />
+            <IconButton
+              label={t('adminCreateUser')}
+              icon={<UserPlus size={16} />}
+              variant="primary"
+              onClick={() => setIsCreateOpen(true)}
+            />
           </div>
 
           <div className="admin-user-list">
             {visibleUsers.map((user) => {
               const draft = drafts[user.id] ?? {};
               return (
-                <article className={`admin-user-card ${user.id === currentUserId ? 'admin-user-card--self' : ''}`} key={user.id}>
+                <article
+                  className={`admin-user-card ${user.id === currentUserId ? 'admin-user-card--self' : ''}`}
+                  key={user.id}
+                >
                   <div className="admin-user-card__profile">
                     <span className="admin-user-card__avatar">{getInitial(user.username)}</span>
                     <div className="admin-user-card__identity">
@@ -428,7 +413,12 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
                         label={t('role')}
                         value={(draft.role ?? user.role) as UserRole}
                         options={roleOptions}
-                        onChange={(nextRole) => setDrafts((current) => ({ ...current, [user.id]: { ...current[user.id], role: nextRole } }))}
+                        onChange={(nextRole) =>
+                          setDrafts((current) => ({
+                            ...current,
+                            [user.id]: { ...current[user.id], role: nextRole },
+                          }))
+                        }
                       />
                     </label>
 
@@ -436,7 +426,12 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
                       <KeyRound size={14} />
                       <input
                         value={draft.password ?? ''}
-                        onChange={(event) => setDrafts((current) => ({ ...current, [user.id]: { ...current[user.id], password: event.target.value } }))}
+                        onChange={(event) =>
+                          setDrafts((current) => ({
+                            ...current,
+                            [user.id]: { ...current[user.id], password: event.target.value },
+                          }))
+                        }
                         placeholder={t('adminNewPassword')}
                         type="password"
                         aria-label={t('adminNewPassword')}
@@ -445,7 +440,12 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
                   </div>
 
                   <div className="admin-user-card__actions">
-                    <IconButton label={t('save')} icon={<Save size={16} />} variant="primary" onClick={() => updateUser(user.id)} />
+                    <IconButton
+                      label={t('save')}
+                      icon={<Save size={16} />}
+                      variant="primary"
+                      onClick={() => updateUser(user.id)}
+                    />
                     <IconButton
                       label={t('delete')}
                       icon={<Trash2 size={16} />}
@@ -457,18 +457,27 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
                 </article>
               );
             })}
-            {visibleUsers.length === 0 ? <div className="empty-state">{t('adminNoUsers')}</div> : null}
+            {visibleUsers.length === 0 ? (
+              <div className="empty-state">{t('adminNoUsers')}</div>
+            ) : null}
           </div>
         </div>
       ) : null}
 
-      <Modal isOpen={isCreateOpen} title={t('adminCreateUser')} closeLabel={t('close')} onClose={() => setIsCreateOpen(false)}>
+      <Modal
+        isOpen={isCreateOpen}
+        title={t('adminCreateUser')}
+        closeLabel={t('close')}
+        onClose={() => setIsCreateOpen(false)}
+      >
         <div className="modal-form admin-create-modal">
           <label className="field-shell">
             <UsersRound size={15} />
             <input
               value={createForm.username}
-              onChange={(event) => setCreateForm((current) => ({ ...current, username: event.target.value }))}
+              onChange={(event) =>
+                setCreateForm((current) => ({ ...current, username: event.target.value }))
+              }
               placeholder={t('username')}
               aria-label={t('username')}
             />
@@ -477,7 +486,9 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
             <KeyRound size={15} />
             <input
               value={createForm.password}
-              onChange={(event) => setCreateForm((current) => ({ ...current, password: event.target.value }))}
+              onChange={(event) =>
+                setCreateForm((current) => ({ ...current, password: event.target.value }))
+              }
               placeholder={t('password')}
               type="password"
               aria-label={t('password')}
@@ -485,10 +496,20 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
           </label>
           <label className="admin-create-modal__role">
             <Shield size={15} />
-            <CustomSelect label={t('role')} value={createForm.role ?? 'user'} options={roleOptions} onChange={(nextRole) => setCreateForm((current) => ({ ...current, role: nextRole }))} />
+            <CustomSelect
+              label={t('role')}
+              value={createForm.role ?? 'user'}
+              options={roleOptions}
+              onChange={(nextRole) => setCreateForm((current) => ({ ...current, role: nextRole }))}
+            />
           </label>
           <div className="modal-actions">
-            <IconButton label={t('adminCreateUser')} icon={<UserPlus size={16} />} variant="primary" onClick={createUser} />
+            <IconButton
+              label={t('adminCreateUser')}
+              icon={<UserPlus size={16} />}
+              variant="primary"
+              onClick={createUser}
+            />
           </div>
         </div>
       </Modal>
@@ -530,8 +551,12 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
                       <button
                         className="activity-table__sort"
                         type="button"
-                        aria-label={activitySort === 'newest' ? t('adminSortNewest') : t('adminSortOldest')}
-                        onClick={() => setActivitySort((current) => (current === 'newest' ? 'oldest' : 'newest'))}
+                        aria-label={
+                          activitySort === 'newest' ? t('adminSortNewest') : t('adminSortOldest')
+                        }
+                        onClick={() =>
+                          setActivitySort((current) => (current === 'newest' ? 'oldest' : 'newest'))
+                        }
                       >
                         <ArrowDownUp size={13} />
                       </button>
@@ -582,7 +607,9 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
                 {activityRows.map((item) => (
                   <tr key={item.id}>
                     <td>
-                      <TooltipText value={item.userUsername ?? item.actorUsername ?? t('adminUnknownUser')} />
+                      <TooltipText
+                        value={item.userUsername ?? item.actorUsername ?? t('adminUnknownUser')}
+                      />
                     </td>
                     <td>
                       <TooltipText value={new Date(item.createdAt).toLocaleString(dateLocale)} />
@@ -594,13 +621,17 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
                       <TooltipText value={item.actorUsername ?? '-'} />
                     </td>
                     <td>
-                      <TooltipText value={`${item.targetType}${item.targetId ? ` #${item.targetId}` : ''}`} />
+                      <TooltipText
+                        value={`${item.targetType}${item.targetId ? ` #${item.targetId}` : ''}`}
+                      />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            {activityRows.length === 0 ? <div className="empty-state">{t('adminNoActivity')}</div> : null}
+            {activityRows.length === 0 ? (
+              <div className="empty-state">{t('adminNoActivity')}</div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -625,8 +656,13 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
                   <span>{t('adminRoleShare')}</span>
                   <strong>{statsDerived.adminPercent}%</strong>
                 </div>
-                <div className="stats-donut" style={{ '--chart-value': `${statsDerived.adminPercent}%` } as CSSProperties}>
-                  <span>{stats.adminsTotal}/{stats.usersTotal}</span>
+                <div
+                  className="stats-donut"
+                  style={{ '--chart-value': `${statsDerived.adminPercent}%` } as CSSProperties}
+                >
+                  <span>
+                    {stats.adminsTotal}/{stats.usersTotal}
+                  </span>
                 </div>
               </section>
               <section className="stats-chart-card">
@@ -660,8 +696,12 @@ export function AdminPanel({ currentUserId, t, language, onOpenSidebar, onError,
                   </label>
                 </div>
                 <div className="stats-density">
-                  <span>{t('adminNotesPerUser')}: {statsDerived.notesPerUser}</span>
-                  <span>{t('adminEventsPerUser')}: {statsDerived.eventsPerUser}</span>
+                  <span>
+                    {t('adminNotesPerUser')}: {statsDerived.notesPerUser}
+                  </span>
+                  <span>
+                    {t('adminEventsPerUser')}: {statsDerived.eventsPerUser}
+                  </span>
                 </div>
               </section>
             </div>

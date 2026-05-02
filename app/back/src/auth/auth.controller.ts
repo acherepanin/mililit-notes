@@ -23,7 +23,10 @@ export class AuthController {
 
   @Patch('me/preferences')
   @UseGuards(AuthGuard)
-  updatePreferences(@Req() request: AuthenticatedRequest, @Body() dto: UpdatePreferencesDto): AuthUser {
+  updatePreferences(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: UpdatePreferencesDto,
+  ): AuthUser {
     return this.authService.updatePreferences(request.user.id, dto);
   }
 }

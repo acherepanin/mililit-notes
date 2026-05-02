@@ -1,10 +1,10 @@
-# Запуск, Docker и Деплой
+# Запуск, Docker И Деплой
 
 ## Требования
 
 Локально:
 
-- Node.js 22+ рекомендуется;
+- Node.js 22+;
 - npm;
 - Docker и Docker Compose для контейнерного запуска.
 
@@ -27,10 +27,10 @@
 | `DB_PATH` | `notes.sqlite` | SQLite-файл относительно `app/back`, если запуск идет из `app/back` |
 | `ADMIN_USERNAME` | `admin` | Логин seed-admin |
 | `ADMIN_PASSWORD` | `admin` | Пароль seed-admin |
-| `AUTH_SECRET` | dev-secret из `.env` | HMAC secret для токенов |
-| `AUTH_TOKEN_TTL_SECONDS` | `1209600` | TTL токена, 14 дней |
+| `AUTH_SECRET` | dev-secret из `.env` | HMAC secret для token |
+| `AUTH_TOKEN_TTL_SECONDS` | `1209600` | TTL token, 14 дней |
 
-Для production задайте сильный `AUTH_SECRET`, `ADMIN_USERNAME` и `ADMIN_PASSWORD` до первого запуска с пустой БД.
+Для production задайте сильный `AUTH_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` до первого запуска с пустой БД.
 
 ## Локальный Dev-Запуск
 
@@ -225,7 +225,7 @@ docker image prune -f
 
 Не коммитьте реальные production-секреты.
 
-## Деплой на VM
+## Деплой На VM
 
 Скрипт: `app/vm/deploy.sh`
 
@@ -282,6 +282,7 @@ Frontend:
 
 ```bash
 cd app/front
+npm run format
 npm run lint
 npm run build
 ```
@@ -290,6 +291,7 @@ Backend:
 
 ```bash
 cd app/back
+npm run format
 npm run lint
 npm run build
 ```
@@ -307,7 +309,7 @@ Health:
 curl -s http://localhost:3000/api/health
 ```
 
-## Данные и Backup
+## Данные И Backup
 
 SQLite работает в WAL-режиме. Рядом с основным файлом могут появляться:
 
@@ -319,7 +321,7 @@ SQLite работает в WAL-режиме. Рядом с основным фа
 
 Для backup копируйте все связанные файлы или делайте SQLite backup при остановленном приложении.
 
-Безопасный порядок ручного backup на VM:
+Безопасный ручной backup на VM:
 
 ```bash
 cd ~/docker
@@ -328,4 +330,4 @@ tar -czf notes-data-backup-$(date +%Y%m%d-%H%M%S).tar.gz notes-data
 docker compose --env-file .env up -d
 ```
 
-Если SQLite-файл был удален и backup отсутствует, данные восстановить нельзя. При следующем старте backend создаст пустую БД и seed-admin.
+Если SQLite-файл удален и backup отсутствует, данные восстановить нельзя. При следующем старте backend создаст пустую БД и seed-admin.

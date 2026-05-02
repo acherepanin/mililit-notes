@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 
+import { AmbientCubes } from '../../components/AmbientCubes';
 import { IconButton } from '../../components/IconButton';
 import { Tooltip } from '../../components/Tooltip';
 import { TooltipText } from '../../components/TooltipText';
@@ -174,6 +175,7 @@ export function Sidebar({
 
   return (
     <aside className={`sidebar ${isOpen ? 'sidebar--open' : ''}`}>
+      <AmbientCubes area="sidebar" />
       <div className="sidebar__head">
         <div className="brand-lockup">
           <Tooltip label={isMenuMode ? t('notesTree') : t('menu')}>

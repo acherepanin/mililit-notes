@@ -5,7 +5,12 @@ import { createPortal } from 'react-dom';
 
 import { Tooltip } from '../components/Tooltip';
 import { TooltipText } from '../components/TooltipText';
-import { copyFieldKinds, getKindLabel, type CopyFieldKind, type CopyFieldKindLabels } from './copyFieldModel';
+import {
+  copyFieldKinds,
+  getKindLabel,
+  type CopyFieldKind,
+  type CopyFieldKindLabels,
+} from './copyFieldModel';
 
 interface FieldKindMenuProps {
   kind: CopyFieldKind;
@@ -62,7 +67,10 @@ export function CopyFieldKindMenu({ kind, labels, disabled, onChange }: FieldKin
     const freeBelow = window.innerHeight - rect.bottom;
     const freeAbove = rect.top;
     const nextDirection = freeBelow >= 190 || freeBelow >= freeAbove ? 'down' : 'up';
-    const maxHeight = Math.max(120, Math.min(236, (nextDirection === 'down' ? freeBelow : freeAbove) - 10));
+    const maxHeight = Math.max(
+      120,
+      Math.min(236, (nextDirection === 'down' ? freeBelow : freeAbove) - 10),
+    );
 
     setDirection(nextDirection);
     setMenuStyle({

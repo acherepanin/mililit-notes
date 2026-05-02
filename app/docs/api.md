@@ -1,4 +1,4 @@
-# REST API и cURL
+# REST API И cURL
 
 ## База
 
@@ -19,7 +19,7 @@ BASE_URL=http://localhost:3000/api
 Authorization: Bearer <token>
 ```
 
-В PowerShell на Windows для примеров cURL используйте `curl.exe`, чтобы не попасть в alias `Invoke-WebRequest`.
+В PowerShell используйте `curl.exe`, чтобы не попасть в alias `Invoke-WebRequest`.
 
 ## Ошибки
 
@@ -43,7 +43,7 @@ Authorization: Bearer <token>
 }
 ```
 
-`ValidationPipe` настроен с `whitelist`, `forbidNonWhitelisted` и `transform`.
+`ValidationPipe` настроен с `whitelist`, `forbidNonWhitelisted`, `transform`.
 
 ## Auth
 
@@ -95,7 +95,7 @@ TOKEN=$(curl -s -X POST "$BASE_URL/auth/login" \
 
 Ошибки:
 
-- `401` - неверный логин или пароль.
+- `401` - неверный логин, пароль, token или истекший token.
 
 ### GET `/api/me`
 
@@ -121,10 +121,6 @@ curl -s "$BASE_URL/me" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Ошибки:
-
-- `401` - нет токена, токен неверный, истек или пользователь удален.
-
 ### PATCH `/api/me/preferences`
 
 Обновляет язык и тему текущего пользователя.
@@ -143,8 +139,6 @@ Validation:
 - `language`: optional, `ru` или `en`;
 - `theme`: optional, `light` или `dark`.
 
-Response `200`: объект `AuthUser`.
-
 cURL:
 
 ```bash
@@ -153,11 +147,6 @@ curl -s -X PATCH "$BASE_URL/me/preferences" \
   -H "Content-Type: application/json" \
   -d '{"language":"en","theme":"light"}'
 ```
-
-Ошибки:
-
-- `400` - неверное значение;
-- `401` - нет валидной авторизации.
 
 ## Healthcheck
 
@@ -188,7 +177,6 @@ curl -s "$BASE_URL/health"
 ```ts
 interface Note {
   id: number;
-  userId: number;
   name: string;
   contentHtml: string;
   contentText: string;
@@ -214,19 +202,6 @@ interface NoteTreeNode {
 
 Дерево заметок текущего пользователя.
 
-Response `200`:
-
-```json
-[
-  {
-    "id": 1,
-    "name": "Welcome",
-    "parentId": null,
-    "children": []
-  }
-]
-```
-
 cURL:
 
 ```bash
@@ -238,22 +213,6 @@ curl -s "$BASE_URL/notes/tree" \
 
 Одна заметка текущего пользователя.
 
-Response `200`:
-
-```json
-{
-  "id": 1,
-  "userId": 1,
-  "name": "Welcome",
-  "contentHtml": "<h2>Notes</h2>",
-  "contentText": "Notes",
-  "parentId": null,
-  "position": 0,
-  "createdAt": "2026-05-02T09:16:23.000Z",
-  "updatedAt": "2026-05-02T09:16:23.000Z"
-}
-```
-
 cURL:
 
 ```bash
@@ -263,7 +222,6 @@ curl -s "$BASE_URL/notes/1" \
 
 Ошибки:
 
-- `400` - `id` не число;
 - `404` - заметка не найдена или принадлежит другому пользователю.
 
 ### POST `/api/notes`
@@ -274,62 +232,40 @@ Request:
 
 ```json
 {
-  "name": "New note",
+  "name": "Новая заметка",
   "parentId": null
 }
 ```
 
 Validation:
 
-- `name`: string, 1..120 символов;
+- `name`: string, 1..120;
 - `parentId`: optional, integer >= 1 или `null`.
 
-Response `201`: объект `Note`.
-
-cURL, корневая заметка:
+cURL:
 
 ```bash
 curl -s -X POST "$BASE_URL/notes" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name":"API note","parentId":null}'
+  -d '{"name":"Новая заметка","parentId":null}'
 ```
-
-cURL, дочерняя заметка:
-
-```bash
-curl -s -X POST "$BASE_URL/notes" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Child note","parentId":1}'
-```
-
-Ошибки:
-
-- `400` - неверный payload или пустое имя после trim;
-- `404` - parent не найден у текущего пользователя.
 
 ### PATCH `/api/notes/:id`
 
-Частично обновляет заметку текущего пользователя.
+Редактирует название и содержимое заметки.
 
 Request:
 
 ```json
 {
-  "name": "Updated note",
+  "name": "Переименовано",
   "contentHtml": "<p>Hello</p>",
   "contentText": "Hello"
 }
 ```
 
-Validation:
-
-- `name`: optional, string, 1..120 символов;
-- `contentHtml`: optional, string;
-- `contentText`: optional, string.
-
-Response `200`: объект `Note`.
+Все поля optional. При сохранении редактор обычно отправляет `name`, `contentHtml`, `contentText`.
 
 cURL:
 
@@ -337,17 +273,12 @@ cURL:
 curl -s -X PATCH "$BASE_URL/notes/1" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"contentHtml":"<pre><code class=\"language-json\">{\"ok\":true}</code></pre>","contentText":"{\"ok\":true}"}'
+  -d '{"name":"Переименовано","contentHtml":"<p>Hello</p>","contentText":"Hello"}'
 ```
-
-Ошибки:
-
-- `400` - неверный payload;
-- `404` - заметка не найдена или принадлежит другому пользователю.
 
 ### PATCH `/api/notes/:id/move`
 
-Переносит заметку текущего пользователя.
+Перемещает заметку в другую папку или в корень.
 
 Request:
 
@@ -362,8 +293,6 @@ Validation:
 
 - `parentId`: optional, integer >= 1 или `null`;
 - `position`: optional, integer >= 0.
-
-Response `200`: объект `Note`.
 
 cURL:
 
@@ -383,14 +312,6 @@ curl -s -X PATCH "$BASE_URL/notes/2/move" \
 
 Удаляет заметку текущего пользователя. Потомки удаляются каскадно.
 
-Response `200`:
-
-```json
-{
-  "id": 1
-}
-```
-
 cURL:
 
 ```bash
@@ -398,17 +319,13 @@ curl -s -X DELETE "$BASE_URL/notes/1" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Ошибки:
-
-- `404` - заметка не найдена или принадлежит другому пользователю.
-
 ## Admin
 
 Все admin endpoints требуют роль `admin`.
 
 Ошибки:
 
-- `401` - нет валидного Bearer-токена;
+- `401` - нет валидного Bearer-token;
 - `403` - пользователь не admin.
 
 ### Модель `AdminUser`
@@ -430,24 +347,6 @@ interface AdminUser {
 ### GET `/api/admin/users`
 
 Список пользователей.
-
-Response `200`:
-
-```json
-[
-  {
-    "id": 1,
-    "username": "admin",
-    "role": "admin",
-    "language": "ru",
-    "theme": "dark",
-    "lastLoginAt": "2026-05-02T09:16:23.000Z",
-    "createdAt": "2026-05-02T09:00:00.000Z",
-    "updatedAt": "2026-05-02T09:16:23.000Z",
-    "notesCount": 1
-  }
-]
-```
 
 cURL:
 
@@ -471,16 +370,6 @@ Request:
   "theme": "dark"
 }
 ```
-
-Validation:
-
-- `username`: string, 1..80;
-- `password`: string, 1..200;
-- `role`: optional, `user` или `admin`;
-- `language`: optional, `ru` или `en`;
-- `theme`: optional, `light` или `dark`.
-
-Response `201`: объект `AdminUser`.
 
 cURL:
 
@@ -509,10 +398,6 @@ Request:
 }
 ```
 
-Все поля optional. Если `password` не передан, пароль не меняется. При включенном `ValidationPipe` с `forbidNonWhitelisted` поля `username`, `language`, `theme` и любые другие лишние поля вернут `400`.
-
-Response `200`: объект `AdminUser`.
-
 cURL:
 
 ```bash
@@ -525,19 +410,11 @@ curl -s -X PATCH "$BASE_URL/admin/users/2" \
 Ошибки:
 
 - `400` - неверный payload или попытка оставить систему без admin;
-- `404` - пользователь не найден;
+- `404` - пользователь не найден.
 
 ### DELETE `/api/admin/users/:id`
 
 Удаляет пользователя и все его заметки.
-
-Response `200`:
-
-```json
-{
-  "id": 2
-}
-```
 
 cURL:
 
@@ -570,29 +447,6 @@ interface ActivityLog {
   details: Record<string, unknown>;
   createdAt: string;
 }
-```
-
-Response `200`:
-
-```json
-[
-  {
-    "id": 6,
-    "actorId": 1,
-    "actorUsername": "admin",
-    "userId": 2,
-    "userUsername": "bob",
-    "action": "admin.user.delete",
-    "targetType": "user",
-    "targetId": 2,
-    "details": {
-      "username": "bob",
-      "role": "user",
-      "notesCount": 1
-    },
-    "createdAt": "2026-05-02T09:16:23.000Z"
-  }
-]
 ```
 
 cURL:

@@ -33,7 +33,10 @@ export function CustomSelect<TValue extends string>({
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
-  const selectedOption = useMemo(() => options.find((option) => option.value === value) ?? options[0], [options, value]);
+  const selectedOption = useMemo(
+    () => options.find((option) => option.value === value) ?? options[0],
+    [options, value],
+  );
 
   const updateMenuPosition = useCallback(() => {
     const button = buttonRef.current;
@@ -45,7 +48,10 @@ export function CustomSelect<TValue extends string>({
     const freeBelow = window.innerHeight - rect.bottom;
     const freeAbove = rect.top;
     const nextDirection = freeBelow >= 232 || freeBelow >= freeAbove ? 'down' : 'up';
-    const maxHeight = Math.max(120, Math.min(260, (nextDirection === 'down' ? freeBelow : freeAbove) - 12));
+    const maxHeight = Math.max(
+      120,
+      Math.min(260, (nextDirection === 'down' ? freeBelow : freeAbove) - 12),
+    );
 
     setDirection(nextDirection);
     setMenuStyle({
@@ -133,27 +139,27 @@ export function CustomSelect<TValue extends string>({
               ref={menuRef}
               style={menuStyle}
             >
-          {options.map((option) => {
-            const selected = option.value === value;
+              {options.map((option) => {
+                const selected = option.value === value;
 
-            return (
-              <button
-                className={`custom-select__option ${selected ? 'custom-select__option--selected' : ''}`}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                key={option.value}
-                onClick={() => {
-                  onChange(option.value);
-                  setIsOpen(false);
-                  buttonRef.current?.focus();
-                }}
-              >
-                <TooltipText value={option.label} className="custom-select__option-label" />
-                {selected ? <Check size={13} /> : <span />}
-              </button>
-            );
-          })}
+                return (
+                  <button
+                    className={`custom-select__option ${selected ? 'custom-select__option--selected' : ''}`}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    key={option.value}
+                    onClick={() => {
+                      onChange(option.value);
+                      setIsOpen(false);
+                      buttonRef.current?.focus();
+                    }}
+                  >
+                    <TooltipText value={option.label} className="custom-select__option-label" />
+                    {selected ? <Check size={13} /> : <span />}
+                  </button>
+                );
+              })}
             </div>,
             document.body,
           )

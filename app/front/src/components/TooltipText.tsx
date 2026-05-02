@@ -8,7 +8,12 @@ interface TooltipTextProps extends HTMLAttributes<HTMLSpanElement> {
   focusable?: boolean;
 }
 
-export function TooltipText({ value, focusable = false, className = '', ...props }: TooltipTextProps) {
+export function TooltipText({
+  value,
+  focusable = false,
+  className = '',
+  ...props
+}: TooltipTextProps) {
   const valueRef = useRef<HTMLSpanElement>(null);
   const [isTruncated, setIsTruncated] = useState(false);
 
@@ -25,7 +30,8 @@ export function TooltipText({ value, focusable = false, className = '', ...props
       return;
     }
 
-    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateTruncation);
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateTruncation);
     resizeObserver?.observe(element);
     window.addEventListener('resize', updateTruncation);
 

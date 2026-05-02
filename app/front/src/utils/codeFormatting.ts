@@ -45,7 +45,9 @@ function formatMarkup(value: string): string {
   return lines
     .map((line) => {
       const isClosing = /^<\//.test(line);
-      const isSingle = /^<[^>]+\/>$/.test(line) || /^<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b/i.test(line);
+      const isSingle =
+        /^<[^>]+\/>$/.test(line) ||
+        /^<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\b/i.test(line);
 
       if (isClosing) {
         depth = Math.max(0, depth - 1);
@@ -65,7 +67,10 @@ function formatMarkup(value: string): string {
 function formatSql(value: string): string {
   return normalizeLineEndings(value)
     .replace(/\s+/g, ' ')
-    .replace(/\b(select|from|where|and|or|join|left join|right join|inner join|group by|order by|limit|values|set)\b/gi, (match) => `\n${match.toUpperCase()}`)
+    .replace(
+      /\b(select|from|where|and|or|join|left join|right join|inner join|group by|order by|limit|values|set)\b/gi,
+      (match) => `\n${match.toUpperCase()}`,
+    )
     .replace(/\n+/g, '\n')
     .trim();
 }
@@ -87,7 +92,9 @@ export function formatCodeText(value: string, language: string): string {
       return formatMarkup(normalizedValue);
     }
 
-    if (/\b(select|insert|update|delete|from|where|join|group by|order by)\b/i.test(normalizedValue)) {
+    if (
+      /\b(select|insert|update|delete|from|where|join|group by|order by)\b/i.test(normalizedValue)
+    ) {
       return formatSql(normalizedValue);
     }
   }

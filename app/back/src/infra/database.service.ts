@@ -14,7 +14,8 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   constructor(@Inject(ConfigService) private readonly configService: ConfigService) {}
 
   onModuleInit(): void {
-    const dbPath = this.configService.get<string>('DB_PATH')?.trim() || join(process.cwd(), 'notes.sqlite');
+    const dbPath =
+      this.configService.get<string>('DB_PATH')?.trim() || join(process.cwd(), 'notes.sqlite');
 
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
@@ -81,15 +82,27 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_logs(created_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_logs(user_id, created_at DESC);
     `);
-    this.ensureColumn('users', 'role', "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+    this.ensureColumn(
+      'users',
+      'role',
+      "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'",
+    );
     this.ensureColumn('users', 'last_login_at', 'ALTER TABLE users ADD COLUMN last_login_at TEXT');
-    this.ensureColumn('notes', 'user_id', 'ALTER TABLE notes ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
+    this.ensureColumn(
+      'notes',
+      'user_id',
+      'ALTER TABLE notes ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE',
+    );
   }
 
   private seedIfEmpty(): void {
     const adminId = this.seedAdminUser();
-    this.connection.prepare('UPDATE notes SET user_id = @adminId WHERE user_id IS NULL').run({ adminId });
-    const row = this.connection.prepare('SELECT COUNT(*) as count FROM notes').get() as { count: number };
+    this.connection
+      .prepare('UPDATE notes SET user_id = @adminId WHERE user_id IS NULL')
+      .run({ adminId });
+    const row = this.connection.prepare('SELECT COUNT(*) as count FROM notes').get() as {
+      count: number;
+    };
 
     if (row.count > 0) {
       return;
@@ -114,14 +127,16 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
 
   private seedAdminUser(): number {
-    const existing = this.connection.prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1').get() as
-      | { id: number }
-      | undefined;
+    const existing = this.connection
+      .prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1')
+      .get() as { id: number } | undefined;
 
     if (existing) {
-      this.connection.prepare("UPDATE users SET role = 'admin' WHERE id = @id AND role != 'admin'").run({
-        id: existing.id,
-      });
+      this.connection
+        .prepare("UPDATE users SET role = 'admin' WHERE id = @id AND role != 'admin'")
+        .run({
+          id: existing.id,
+        });
       return existing.id;
     }
 
@@ -142,7 +157,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         now,
       });
 
-    const row = this.connection.prepare('SELECT id FROM users WHERE lower(username) = lower(?)').get(username) as {
+    const row = this.connection
+      .prepare('SELECT id FROM users WHERE lower(username) = lower(?)')
+      .get(username) as {
       id: number;
     };
 
@@ -150,7 +167,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
 
   private ensureColumn(tableName: string, columnName: string, sql: string): void {
-    const columns = this.connection.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    const columns = this.connection.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+      name: string;
+    }>;
 
     if (!columns.some((column) => column.name === columnName)) {
       this.connection.exec(sql);

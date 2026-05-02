@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 
 import { ActivityService } from '../activity/activity.service';
 import type { ActivityResponse } from '../activity/activity.types';
@@ -85,7 +91,9 @@ export class AdminService {
       params.role = dto.role;
     }
 
-    this.databaseService.connection.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = @id`).run(params);
+    this.databaseService.connection
+      .prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = @id`)
+      .run(params);
     const user = this.getUserById(id);
     this.activityService.record({
       actorId,
@@ -160,10 +168,10 @@ export class AdminService {
     return this.mapUser(row);
   }
 
-  private ensureUsernameAvailable(username: string, excludeId?: number): void {
+  private ensureUsernameAvailable(username: string): void {
     const row = this.databaseService.connection
-      .prepare('SELECT id FROM users WHERE lower(username) = lower(@username) AND (@excludeId IS NULL OR id != @excludeId)')
-      .get({ username, excludeId: excludeId ?? null }) as { id: number } | undefined;
+      .prepare('SELECT id FROM users WHERE lower(username) = lower(@username)')
+      .get({ username }) as { id: number } | undefined;
 
     if (row) {
       throw new ConflictException('Username is already used');
@@ -181,7 +189,9 @@ export class AdminService {
   }
 
   private countAdmins(): number {
-    const row = this.databaseService.connection.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as {
+    const row = this.databaseService.connection
+      .prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'")
+      .get() as {
       count: number;
     };
 

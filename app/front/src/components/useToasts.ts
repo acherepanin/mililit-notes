@@ -15,7 +15,9 @@ export function useToasts() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const dismiss = useCallback((id: string) => {
-    setToasts((items) => items.map((item) => (item.id === id ? { ...item, isClosing: true } : item)));
+    setToasts((items) =>
+      items.map((item) => (item.id === id ? { ...item, isClosing: true } : item)),
+    );
     window.setTimeout(() => {
       setToasts((items) => items.filter((item) => item.id !== id));
     }, toastExitMs);
