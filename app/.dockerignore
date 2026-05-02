@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+back/public
+back/data
+vm/data
+**/.env
+**/*.log
+**/*.tsbuildinfo
+**/vite.config.js
+**/vite.config.d.ts
+.git
+.idea
+docs
