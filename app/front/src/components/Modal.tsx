@@ -9,10 +9,18 @@ interface ModalProps {
   title: string;
   closeLabel: string;
   children: ReactNode;
+  panelClassName?: string;
   onClose: () => void;
 }
 
-export function Modal({ isOpen, title, closeLabel, children, onClose }: ModalProps) {
+export function Modal({
+  isOpen,
+  title,
+  closeLabel,
+  children,
+  panelClassName = '',
+  onClose,
+}: ModalProps) {
   const [shouldRender, setShouldRender] = useState(isOpen);
   const [isClosing, setIsClosing] = useState(false);
 
@@ -61,7 +69,7 @@ export function Modal({ isOpen, title, closeLabel, children, onClose }: ModalPro
       onMouseDown={onClose}
     >
       <section
-        className="modal-panel"
+        className={`modal-panel ${panelClassName}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

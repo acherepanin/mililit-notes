@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, FileText, Pencil, Save, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileText, Pencil, Pin, Save, Star, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { IconButton } from '../../components/IconButton';
@@ -18,6 +18,7 @@ interface NotesTreeProps {
   onDragStart: (id: number | null) => void;
   onDrop: (parentId: number | null) => void;
   t: Translator;
+  isDraggable?: boolean;
 }
 
 export function NotesTree({
@@ -32,6 +33,7 @@ export function NotesTree({
   onDragStart,
   onDrop,
   t,
+  isDraggable = true,
 }: NotesTreeProps) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [draftName, setDraftName] = useState('');
@@ -72,9 +74,9 @@ export function NotesTree({
         >
           <div
             className={`tree__row ${isActive ? 'tree__row--active' : ''} ${draggedId === node.id ? 'tree__row--dragging' : ''}`}
-            draggable={!isEditing}
+            draggable={isDraggable && !isEditing}
             onDragStart={(event) => {
-              if (isEditing) {
+              if (!isDraggable || isEditing) {
                 event.preventDefault();
                 return;
               }
@@ -130,6 +132,13 @@ export function NotesTree({
                 <TooltipText value={node.name} />
               </button>
             )}
+
+            {node.isFavorite || node.isPinned ? (
+              <div className="tree__badges" aria-hidden="true">
+                {node.isFavorite ? <Star fill="currentColor" size={11} /> : null}
+                {node.isPinned ? <Pin fill="currentColor" size={11} /> : null}
+              </div>
+            ) : null}
 
             <div className="tree__actions" onMouseDown={(event) => event.stopPropagation()}>
               {isEditing ? (

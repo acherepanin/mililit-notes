@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '../infra/database.service';
+import { isRecord } from '../utils/type-guards';
 import type { ActivityRecord, ActivityResponse, RecordActivityParams } from './activity.types';
 
 @Injectable()
@@ -71,7 +72,9 @@ export class ActivityService {
 
   private parseDetails(details: string): Record<string, unknown> {
     try {
-      return JSON.parse(details) as Record<string, unknown>;
+      const parsed: unknown = JSON.parse(details);
+
+      return isRecord(parsed) ? parsed : {};
     } catch {
       return {};
     }

@@ -2,6 +2,7 @@ import { EditorContent } from '@tiptap/react';
 import { Link2, Trash2, Undo2 } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { notesApi, workspaceApi } from '../../api';
 import { AmbientCubes } from '../../components/AmbientCubes';
 import { IconButton } from '../../components/IconButton';
 import { Modal } from '../../components/Modal';
@@ -11,19 +12,36 @@ import { EditorLinkTooltip } from '../../editor/EditorLinkTooltip';
 import { formatCurrentCodeBlock } from '../../editor/editorCode';
 import { useNotebookEditor } from '../../editor/useNotebookEditor';
 import type { Translator } from '../../i18n';
-import type { AuthUser, UserLanguage, UserTheme } from '../../types';
+import type { AuthUser, Tag, UserLanguage, UserTheme } from '../../types';
 import type { ToastKind } from '../../components/useToasts';
 import { escapeHtml } from '../../utils/html';
+import {
+  AttachmentsPanel,
+  ShareLinksPanel,
+  TemplatesPanel,
+  TrashPanel,
+  VersionsPanel,
+} from '../notes/NoteToolPanels';
 import { Sidebar } from '../notes/Sidebar';
 import { Topbar } from '../notes/Topbar';
 import { useAppShortcuts, useShortcutItems } from '../notes/useAppShortcuts';
 import { useNotesWorkspace } from '../notes/useNotesWorkspace';
+import { downloadJsonFile, validateJsonExportPayload } from './jsonBackup';
 
 const AdminPanel = lazy(() =>
   import('../admin/AdminPanel').then((module) => ({ default: module.AdminPanel })),
 );
 
-type ActiveModal = { type: 'delete' } | { type: 'link' } | null;
+type ActiveModal =
+  | { type: 'delete' }
+  | { type: 'link' }
+  | { type: 'trash' }
+  | { type: 'versions' }
+  | { type: 'templates' }
+  | { type: 'share' }
+  | { type: 'attachments' }
+  | { type: 'accountAttachments' }
+  | null;
 type WorkspaceView = 'notes' | 'admin';
 
 interface AuthenticatedAppProps {
@@ -52,10 +70,12 @@ export default function AuthenticatedApp({
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [activeView, setActiveView] = useState<WorkspaceView>('notes');
   const [isEditorEditing, setIsEditorEditing] = useState(false);
+  const [globalTags, setGlobalTags] = useState<Tag[]>([]);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkText, setLinkText] = useState('');
   const lastErrorRef = useRef<string | null>(null);
   const editorWrapRef = useRef<HTMLElement | null>(null);
+  const globalTagNames = useMemo(() => globalTags.map((tag) => tag.name), [globalTags]);
 
   const editor = useNotebookEditor({
     onContentChange: workspace.updateDraftContent,
@@ -82,6 +102,16 @@ export default function AuthenticatedApp({
       setActiveView('notes');
     }
   }, [activeView, user.role]);
+
+  const refreshGlobalTags = useCallback(async () => {
+    const tags = await notesApi.listTags();
+    setGlobalTags(tags);
+    return tags;
+  }, []);
+
+  useEffect(() => {
+    refreshGlobalTags().catch(() => pushToast('error', t('loadError')));
+  }, [pushToast, refreshGlobalTags, t]);
 
   useEffect(() => {
     if (!editor) {
@@ -258,6 +288,163 @@ export default function AuthenticatedApp({
     [pushToast, t, workspace],
   );
 
+  const updateTags = useCallback(
+    (tags: string[]) => {
+      if (!workspace.selectedNote) {
+        return;
+      }
+
+      notesApi
+        .updateTags(workspace.selectedNote.id, tags)
+        .then((note) => {
+          workspace.replaceSelectedNote(note);
+          return workspace.refreshTree();
+        })
+        .then(() => pushToast('success', t('saved')))
+        .catch((caught: unknown) => {
+          workspace.setActionError(caught, t('saveError'));
+          pushToast('error', t('saveError'));
+        });
+    },
+    [pushToast, t, workspace],
+  );
+
+  const createGlobalTag = useCallback(
+    async (name: string) => {
+      if (!name.trim()) {
+        return;
+      }
+
+      try {
+        await notesApi.createTag(name.trim());
+        await refreshGlobalTags();
+        pushToast('success', t('saved'));
+      } catch (caught: unknown) {
+        workspace.setActionError(caught, t('saveError'));
+        pushToast('error', t('saveError'));
+        throw caught;
+      }
+    },
+    [pushToast, refreshGlobalTags, t, workspace],
+  );
+
+  const updateGlobalTag = useCallback(
+    async (tag: Tag, name: string) => {
+      try {
+        const nextTag = await notesApi.updateTag(tag.id, name);
+        setGlobalTags((current) =>
+          current.some((currentTag) => currentTag.id === nextTag.id)
+            ? current.filter((currentTag) => currentTag.id !== tag.id)
+            : current.map((currentTag) => (currentTag.id === tag.id ? nextTag : currentTag)),
+        );
+        if (workspace.treeFilter.kind === 'tag' && workspace.treeFilter.tag === tag.name) {
+          workspace.setTreeFilter({ kind: 'tag', tag: nextTag.name });
+        }
+        if (workspace.selectedNote?.tags.includes(tag.name)) {
+          workspace.replaceSelectedNote({
+            ...workspace.selectedNote,
+            tags: workspace.selectedNote.tags.map((noteTag) =>
+              noteTag === tag.name ? nextTag.name : noteTag,
+            ),
+          });
+        }
+        await workspace.refreshTree();
+        pushToast('success', t('saved'));
+      } catch (caught: unknown) {
+        workspace.setActionError(caught, t('saveError'));
+        pushToast('error', t('saveError'));
+        throw caught;
+      }
+    },
+    [pushToast, t, workspace],
+  );
+
+  const deleteGlobalTag = useCallback(
+    async (tag: Tag) => {
+      try {
+        await notesApi.deleteTag(tag.id);
+        setGlobalTags((current) => current.filter((currentTag) => currentTag.id !== tag.id));
+        if (workspace.treeFilter.kind === 'tag' && workspace.treeFilter.tag === tag.name) {
+          workspace.setTreeFilter({ kind: 'all' });
+        }
+        if (workspace.selectedNote?.tags.includes(tag.name)) {
+          workspace.replaceSelectedNote({
+            ...workspace.selectedNote,
+            tags: workspace.selectedNote.tags.filter((noteTag) => noteTag !== tag.name),
+          });
+        }
+        await workspace.refreshTree();
+        pushToast('success', t('delete'));
+      } catch (caught: unknown) {
+        workspace.setActionError(caught, t('deleteError'));
+        pushToast('error', t('deleteError'));
+        throw caught;
+      }
+    },
+    [pushToast, t, workspace],
+  );
+
+  const toggleFavorite = useCallback(() => {
+    if (!workspace.selectedNote) {
+      return;
+    }
+
+    notesApi
+      .updateNote(workspace.selectedNote.id, { isFavorite: !workspace.selectedNote.isFavorite })
+      .then((note) => {
+        workspace.replaceSelectedNote(note);
+        return workspace.refreshTree();
+      })
+      .then(() => pushToast('success', t('saved')))
+      .catch((caught: unknown) => {
+        workspace.setActionError(caught, t('saveError'));
+        pushToast('error', t('saveError'));
+      });
+  }, [pushToast, t, workspace]);
+
+  const togglePinned = useCallback(() => {
+    if (!workspace.selectedNote) {
+      return;
+    }
+
+    notesApi
+      .updateNote(workspace.selectedNote.id, { isPinned: !workspace.selectedNote.isPinned })
+      .then((note) => {
+        workspace.replaceSelectedNote(note);
+        return workspace.refreshTree();
+      })
+      .then(() => pushToast('success', t('saved')))
+      .catch((caught: unknown) => {
+        workspace.setActionError(caught, t('saveError'));
+        pushToast('error', t('saveError'));
+      });
+  }, [pushToast, t, workspace]);
+
+  const exportJsonFile = useCallback(() => {
+    workspaceApi
+      .exportJson()
+      .then((payload) => downloadJsonFile(payload))
+      .then(() => pushToast('success', t('download')))
+      .catch(() => pushToast('error', t('saveError')));
+  }, [pushToast, t]);
+
+  const importJsonFile = useCallback(
+    (file: File) => {
+      file
+        .text()
+        .then((content) => validateJsonExportPayload(JSON.parse(content)))
+        .then((payload) => workspaceApi.importJson(payload))
+        .then(() => Promise.all([workspace.refreshTree(), refreshGlobalTags()]))
+        .then(() => pushToast('success', t('saved')))
+        .catch(() => pushToast('error', t('saveError')));
+    },
+    [pushToast, refreshGlobalTags, t, workspace],
+  );
+
+  const openTrashModal = useCallback(() => {
+    setActiveModal({ type: 'trash' });
+  }, []);
+
   const shortcutItems = useShortcutItems(t);
   useAppShortcuts({
     activeModal: Boolean(activeModal),
@@ -270,6 +457,7 @@ export default function AuthenticatedApp({
     isEditorEditing,
     language,
     openLinkModal,
+    openTemplatesModal: () => setActiveModal({ type: 'templates' }),
     saveEditorContent,
     selectedId: workspace.selectedId,
     setMobileTreeOpen: workspace.setMobileTreeOpen,
@@ -283,7 +471,11 @@ export default function AuthenticatedApp({
     <main className="app-shell">
       <Sidebar
         tree={workspace.visibleTree}
+        pinnedNodes={workspace.pinnedNodes}
         query={workspace.query}
+        treeFilter={workspace.treeFilter}
+        tags={globalTagNames}
+        favoriteCount={workspace.favoriteCount}
         totalNotes={workspace.totalNotes}
         selectedId={workspace.selectedId}
         expanded={workspace.expanded}
@@ -306,6 +498,7 @@ export default function AuthenticatedApp({
           workspace.setMobileTreeOpen(false);
         }}
         onQueryChange={workspace.setQuery}
+        onFilterChange={workspace.setTreeFilter}
         onCreateNote={() => createDefaultNote(workspace.selectedId)}
         onSelectRoot={workspace.selectRoot}
         onDropRoot={() => dropDraggedNote(null)}
@@ -320,6 +513,10 @@ export default function AuthenticatedApp({
         onDropNode={dropDraggedNote}
         onLanguageToggle={() => onLanguageChange(language === 'ru' ? 'en' : 'ru')}
         onThemeToggle={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
+        onExportJson={exportJsonFile}
+        onImportJson={importJsonFile}
+        onOpenTrash={openTrashModal}
+        onOpenGlobalAttachments={() => setActiveModal({ type: 'accountAttachments' })}
         onLogout={onLogout}
       />
 
@@ -343,24 +540,36 @@ export default function AuthenticatedApp({
             <Topbar
               selectedNote={workspace.selectedNote}
               draft={workspace.draft}
+              tags={globalTags}
               t={t}
               language={language}
-              shortcuts={shortcutItems}
               isEditing={isEditorEditing}
               onOpenSidebar={() => workspace.setMobileTreeOpen((isOpen) => !isOpen)}
               onDraftNameChange={workspace.updateDraftName}
               onSave={() => void saveEditorContent()}
               onDelete={() => setActiveModal({ type: 'delete' })}
+              onToggleFavorite={toggleFavorite}
+              onTogglePinned={togglePinned}
+              onTagsChange={updateTags}
+              onCreateTag={createGlobalTag}
+              onUpdateTag={updateGlobalTag}
+              onDeleteTag={deleteGlobalTag}
             />
 
             <RichTextToolbar
               editor={editor}
               t={t}
               isEditing={isEditorEditing}
+              hasSelectedNote={Boolean(workspace.selectedNote)}
+              shortcuts={shortcutItems}
               onModeChange={setIsEditorEditing}
               onOpenLink={openLinkModal}
               onInsertCopyField={insertCopyField}
               onInsertSecretField={insertSecretField}
+              onOpenVersions={() => setActiveModal({ type: 'versions' })}
+              onOpenTemplates={() => setActiveModal({ type: 'templates' })}
+              onOpenShareLinks={() => setActiveModal({ type: 'share' })}
+              onOpenAttachments={() => setActiveModal({ type: 'attachments' })}
             />
 
             <section
@@ -400,6 +609,132 @@ export default function AuthenticatedApp({
             />
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={activeModal?.type === 'trash'}
+        title={t('trash')}
+        closeLabel={t('close')}
+        onClose={() => setActiveModal(null)}
+      >
+        <TrashPanel
+          selectedNote={workspace.selectedNote}
+          selectedId={workspace.selectedId}
+          draft={workspace.draft}
+          t={t}
+          onSelectNote={(id) => {
+            setActiveView('notes');
+            workspace.selectNote(id);
+            setActiveModal(null);
+          }}
+          onRefreshTree={workspace.refreshTree}
+          onReloadNote={workspace.loadNote}
+          onSuccess={(message) => pushToast('success', message)}
+          onError={(message) => pushToast('error', message)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={activeModal?.type === 'versions'}
+        title={t('versions')}
+        closeLabel={t('close')}
+        onClose={() => setActiveModal(null)}
+      >
+        <VersionsPanel
+          selectedNote={workspace.selectedNote}
+          selectedId={workspace.selectedId}
+          draft={workspace.draft}
+          t={t}
+          onSelectNote={workspace.selectNote}
+          onRefreshTree={workspace.refreshTree}
+          onReloadNote={workspace.loadNote}
+          onSuccess={(message) => pushToast('success', message)}
+          onError={(message) => pushToast('error', message)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={activeModal?.type === 'templates'}
+        title={t('templates')}
+        closeLabel={t('close')}
+        onClose={() => setActiveModal(null)}
+      >
+        <TemplatesPanel
+          selectedNote={workspace.selectedNote}
+          selectedId={workspace.selectedId}
+          draft={workspace.draft}
+          t={t}
+          onSelectNote={(id) => {
+            setActiveView('notes');
+            workspace.selectNote(id);
+            setActiveModal(null);
+          }}
+          onRefreshTree={workspace.refreshTree}
+          onReloadNote={workspace.loadNote}
+          onSuccess={(message) => pushToast('success', message)}
+          onError={(message) => pushToast('error', message)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={activeModal?.type === 'share'}
+        title={t('shareLinks')}
+        closeLabel={t('close')}
+        onClose={() => setActiveModal(null)}
+      >
+        <ShareLinksPanel
+          selectedNote={workspace.selectedNote}
+          selectedId={workspace.selectedId}
+          draft={workspace.draft}
+          t={t}
+          onSelectNote={workspace.selectNote}
+          onRefreshTree={workspace.refreshTree}
+          onReloadNote={workspace.loadNote}
+          onSuccess={(message) => pushToast('success', message)}
+          onError={(message) => pushToast('error', message)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={activeModal?.type === 'attachments'}
+        title={t('attachments')}
+        closeLabel={t('close')}
+        panelClassName="modal-panel--attachments"
+        onClose={() => setActiveModal(null)}
+      >
+        <AttachmentsPanel
+          selectedNote={workspace.selectedNote}
+          selectedId={workspace.selectedId}
+          draft={workspace.draft}
+          t={t}
+          onSelectNote={workspace.selectNote}
+          onRefreshTree={workspace.refreshTree}
+          onReloadNote={workspace.loadNote}
+          onSuccess={(message) => pushToast('success', message)}
+          onError={(message) => pushToast('error', message)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={activeModal?.type === 'accountAttachments'}
+        title={t('accountFiles')}
+        closeLabel={t('close')}
+        panelClassName="modal-panel--attachments"
+        onClose={() => setActiveModal(null)}
+      >
+        <AttachmentsPanel
+          scope="account"
+          notesTree={workspace.tree}
+          selectedNote={workspace.selectedNote}
+          selectedId={workspace.selectedId}
+          draft={workspace.draft}
+          t={t}
+          onSelectNote={workspace.selectNote}
+          onRefreshTree={workspace.refreshTree}
+          onReloadNote={workspace.loadNote}
+          onSuccess={(message) => pushToast('success', message)}
+          onError={(message) => pushToast('error', message)}
+        />
       </Modal>
 
       <Modal

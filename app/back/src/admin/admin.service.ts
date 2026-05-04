@@ -9,7 +9,9 @@ import {
 import { ActivityService } from '../activity/activity.service';
 import type { ActivityResponse } from '../activity/activity.types';
 import { hashPassword } from '../auth/password';
+import { AttachmentFilesService } from '../infra/attachment-files.service';
 import { DatabaseService } from '../infra/database.service';
+import { AdminStatsService } from './admin-stats.service';
 import type { CreateUserDto } from './dto/create-user.dto';
 import type { UpdateUserDto } from './dto/update-user.dto';
 import type { AdminStatsResponse, AdminUserRecord, AdminUserResponse } from './admin.types';
@@ -19,6 +21,9 @@ export class AdminService {
   constructor(
     @Inject(DatabaseService) private readonly databaseService: DatabaseService,
     @Inject(ActivityService) private readonly activityService: ActivityService,
+    @Inject(AttachmentFilesService)
+    private readonly attachmentFilesService: AttachmentFilesService,
+    @Inject(AdminStatsService) private readonly adminStatsService: AdminStatsService,
   ) {}
 
   listUsers(): AdminUserResponse[] {
@@ -121,6 +126,7 @@ export class AdminService {
       targetId: id,
       details: { username: user.username, role: user.role, notesCount: user.notesCount },
     });
+    this.attachmentFilesService.deleteForUser(id);
     this.databaseService.connection.prepare('DELETE FROM users WHERE id = ?').run(id);
 
     return { id };
@@ -130,22 +136,8 @@ export class AdminService {
     return this.activityService.list(limit);
   }
 
-  getStats(): AdminStatsResponse {
-    const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT
-            (SELECT COUNT(*) FROM users) as usersTotal,
-            (SELECT COUNT(*) FROM users WHERE role = 'admin') as adminsTotal,
-            (SELECT COUNT(*) FROM notes) as notesTotal,
-            (SELECT COUNT(*) FROM activity_logs) as activityTotal,
-            (SELECT MAX(last_login_at) FROM users) as lastLoginAt,
-            (SELECT COUNT(*) FROM users WHERE last_login_at >= @today) as activeUsersToday
-        `,
-      )
-      .get({ today: new Date().toISOString().slice(0, 10) }) as AdminStatsResponse;
-
-    return row;
+  getStats(range?: string): AdminStatsResponse {
+    return this.adminStatsService.getStats(range);
   }
 
   private getUserById(id: number): AdminUserResponse {

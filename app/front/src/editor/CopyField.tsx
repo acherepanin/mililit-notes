@@ -46,6 +46,32 @@ function maskSecret(value: string): string {
   return '*'.repeat(length);
 }
 
+function isAutoLabel(label: string, labels: CopyFieldLabels): boolean {
+  const normalizedLabel = label.trim();
+  const managedLabels = new Set<string>([
+    labels.defaultLabel,
+    ...copyFieldKinds.map((kind) => getKindLabel(labels, kind)),
+  ]);
+
+  return !normalizedLabel || managedLabels.has(normalizedLabel);
+}
+
+function toSafeUrl(value: string): string | null {
+  const trimmedValue = value.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const href = /^[a-z][a-z\d+.-]*:/i.test(trimmedValue) ? trimmedValue : `https://${trimmedValue}`;
+
+  try {
+    const url = new URL(href);
+    return ['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 function generatePassword(length = 18): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*_-+=';
   const required = [
@@ -80,8 +106,9 @@ function createCopyFieldView(labels: CopyFieldLabels) {
     const label = attrs.label ?? '';
     const value = attrs.value ?? '';
     const kind = normalizeKind(attrs.kind);
-    const secret = attrs.secret ?? isSecretKind(kind);
+    const secret = isSecretKind(kind);
     const displayedValue = !isEditable && secret ? maskSecret(value) : value;
+    const safeUrl = kind === 'url' && !secret ? toSafeUrl(value) : null;
 
     useEffect(() => {
       const refresh = () => setIsEditable(editor.isEditable);
@@ -103,7 +130,20 @@ function createCopyFieldView(labels: CopyFieldLabels) {
     };
 
     const generateValue = () => {
-      updateAttributes({ value: generatePassword(), kind: 'password', secret: true });
+      updateAttributes({
+        value: generatePassword(),
+        kind: 'password',
+        secret: true,
+        ...(isAutoLabel(label, labels) ? { label: getKindLabel(labels, 'password') } : {}),
+      });
+    };
+
+    const changeKind = (nextKind: CopyFieldKind) => {
+      updateAttributes({
+        kind: nextKind,
+        secret: isSecretKind(nextKind),
+        ...(isAutoLabel(label, labels) ? { label: getKindLabel(labels, nextKind) } : {}),
+      });
     };
 
     const canGeneratePassword = isEditable && kind === 'password';
@@ -118,9 +158,7 @@ function createCopyFieldView(labels: CopyFieldLabels) {
           kind={kind}
           labels={labels}
           disabled={!isEditable}
-          onChange={(nextKind) =>
-            updateAttributes({ kind: nextKind, secret: isSecretKind(nextKind) })
-          }
+          onChange={changeKind}
         />
         <input
           className="copy-field__label"
@@ -130,15 +168,27 @@ function createCopyFieldView(labels: CopyFieldLabels) {
           readOnly={!isEditable}
           onChange={(event) => updateAttributes({ label: event.target.value })}
         />
-        <input
-          className="copy-field__value"
-          aria-label={labels.fieldValue}
-          value={displayedValue}
-          placeholder={labels.fieldValuePlaceholder}
-          readOnly={!isEditable}
-          type={isEditable && secret ? 'password' : 'text'}
-          onChange={(event) => updateAttributes({ value: event.target.value })}
-        />
+        {!isEditable && safeUrl ? (
+          <a
+            className="copy-field__value copy-field__value--link"
+            href={safeUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {displayedValue || labels.fieldValuePlaceholder}
+          </a>
+        ) : (
+          <input
+            className="copy-field__value"
+            aria-label={labels.fieldValue}
+            value={displayedValue}
+            placeholder={labels.fieldValuePlaceholder}
+            readOnly={!isEditable}
+            type={isEditable && secret ? 'password' : 'text'}
+            onChange={(event) => updateAttributes({ value: event.target.value })}
+          />
+        )}
         {canGeneratePassword ? (
           <Tooltip label={labels.generatePassword}>
             <button
@@ -198,9 +248,11 @@ export function createCopyField(labels: CopyFieldLabels) {
         },
         secret: {
           default: false,
-          parseHTML: (element) => element.getAttribute('data-secret') === 'true',
+          parseHTML: (element) => isSecretKind(normalizeKind(element.getAttribute('data-kind'))),
           renderHTML: (attributes) => ({
-            'data-secret': attributes.secret ? 'true' : 'false',
+            'data-secret': isSecretKind(normalizeKind(attributes.kind as string | undefined))
+              ? 'true'
+              : 'false',
           }),
         },
       };
@@ -214,7 +266,8 @@ export function createCopyField(labels: CopyFieldLabels) {
       const label = HTMLAttributes['data-label'] as string | undefined;
       const value = HTMLAttributes['data-value'] as string | undefined;
       const kind = normalizeKind(HTMLAttributes['data-kind'] as string | undefined);
-      const secret = HTMLAttributes['data-secret'] === 'true' || isSecretKind(kind);
+      const secret = isSecretKind(kind);
+      const safeUrl = kind === 'url' && !secret && value ? toSafeUrl(value) : null;
 
       return [
         'div',
@@ -224,7 +277,18 @@ export function createCopyField(labels: CopyFieldLabels) {
         }),
         ['span', { class: 'copy-field-static__kind' }, getKindLabel(labels, kind)],
         ['strong', {}, label ?? labels.defaultLabel],
-        ['code', {}, secret ? maskSecret(value ?? '') : (value ?? '')],
+        safeUrl
+          ? [
+              'a',
+              {
+                class: 'copy-field-static__link',
+                href: safeUrl,
+                target: '_blank',
+                rel: 'noreferrer',
+              },
+              value ?? '',
+            ]
+          : ['code', {}, secret ? maskSecret(value ?? '') : (value ?? '')],
       ];
     },
 

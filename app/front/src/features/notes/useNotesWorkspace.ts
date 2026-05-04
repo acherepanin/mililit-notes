@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { notesApi } from '../../api';
-import type { Note, NoteDraft, NoteTreeNode, SaveStatus } from '../../types';
+import type { Note, NoteDraft, NoteTreeFilter, NoteTreeNode, SaveStatus } from '../../types';
 import {
+  collectPinnedNodes,
   containsNodeId,
   countNotes,
+  countTreeMatches,
   filterTree,
   getFirstNodeId,
   getRootIds,
@@ -29,11 +31,14 @@ export function useNotesWorkspace(isEnabled: boolean) {
   const [status, setStatus] = useState<SaveStatus>('loading');
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [treeFilter, setTreeFilter] = useState<NoteTreeFilter>({ kind: 'all' });
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
   const [draggedId, setDraggedId] = useState<number | null>(null);
 
-  const visibleTree = useMemo(() => filterTree(tree, query), [query, tree]);
+  const visibleTree = useMemo(() => filterTree(tree, query, treeFilter), [query, tree, treeFilter]);
   const totalNotes = useMemo(() => countNotes(tree), [tree]);
+  const favoriteCount = useMemo(() => countTreeMatches(tree, { kind: 'favorite' }), [tree]);
+  const pinnedNodes = useMemo(() => collectPinnedNodes(tree), [tree]);
 
   const setActionError = useCallback((caught: unknown, fallback: string) => {
     setError(caught instanceof Error ? caught.message : fallback);
@@ -67,6 +72,11 @@ export function useNotesWorkspace(isEnabled: boolean) {
       contentHtml: note.contentHtml,
       contentText: note.contentText,
     });
+    setStatus('saved');
+  }, []);
+
+  const replaceSelectedNote = useCallback((note: Note) => {
+    setSelectedNote((current) => (current?.id === note.id ? note : current));
     setStatus('saved');
   }, []);
 
@@ -266,12 +276,19 @@ export function useNotesWorkspace(isEnabled: boolean) {
     status,
     error,
     query,
+    treeFilter,
+    favoriteCount,
+    pinnedNodes,
     mobileTreeOpen,
     draggedId,
     totalNotes,
     setQuery,
+    setTreeFilter,
     setMobileTreeOpen,
     setDraggedId,
+    refreshTree,
+    loadNote,
+    replaceSelectedNote,
     setActionError,
     selectNote,
     selectRoot,

@@ -29,6 +29,10 @@
 | `ADMIN_PASSWORD` | `admin` | Пароль seed-admin |
 | `AUTH_SECRET` | dev-secret из `.env` | HMAC secret для token |
 | `AUTH_TOKEN_TTL_SECONDS` | `1209600` | TTL token, 14 дней |
+| `SECRET_ENCRYPTION_KEY` | dev-secret из `.env` | Ключ AES-256-GCM для secret/copy fields |
+| `UPLOAD_DIR` | `uploads` | Каталог файлов вложений |
+| `MAX_UPLOAD_SIZE_MB` | `25` | Максимальный размер одного вложения |
+| `ALLOWED_UPLOAD_EXTENSIONS` | список расширений | Разрешенные типы файлов для вложений |
 
 Для production задайте сильный `AUTH_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` до первого запуска с пустой БД.
 
@@ -149,6 +153,7 @@ docker build -f back/Dockerfile -t notes-app:local .
 ```bash
 docker run --rm -p 3000:3000 \
   -e AUTH_SECRET="change-me" \
+  -e SECRET_ENCRYPTION_KEY="change-me-too" \
   -e ADMIN_USERNAME="admin" \
   -e ADMIN_PASSWORD="admin" \
   -v "$PWD/data:/app/data" \

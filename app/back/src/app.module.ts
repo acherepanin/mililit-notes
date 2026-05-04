@@ -8,6 +8,7 @@ import { HealthController } from './health.controller';
 import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './infra/database.module';
 import { NotesModule } from './notes/notes.module';
+import { WorkspaceModule } from './workspace/workspace.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { NotesModule } from './notes/notes.module';
     AdminModule,
     DatabaseModule,
     NotesModule,
+    WorkspaceModule,
   ],
   controllers: [HealthController],
 })

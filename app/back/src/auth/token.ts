@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
+import { isRecord } from '../utils/type-guards';
 import type { TokenPayload } from './auth.types';
 
 function toBase64Url(value: string): string {
@@ -15,17 +16,15 @@ function signPayload(encodedPayload: string, secret: string): string {
 }
 
 function isTokenPayload(value: unknown): value is TokenPayload {
-  if (!value || typeof value !== 'object') {
+  if (!isRecord(value)) {
     return false;
   }
 
-  const payload = value as Partial<TokenPayload>;
-
   return (
-    Number.isInteger(payload.sub) &&
-    typeof payload.username === 'string' &&
-    (payload.role === 'user' || payload.role === 'admin') &&
-    typeof payload.exp === 'number'
+    Number.isInteger(value.sub) &&
+    typeof value.username === 'string' &&
+    (value.role === 'user' || value.role === 'admin') &&
+    typeof value.exp === 'number'
   );
 }
 
@@ -53,7 +52,7 @@ export function readSignedToken(token: string, secret: string): TokenPayload | n
   }
 
   try {
-    const payload = JSON.parse(fromBase64Url(encodedPayload)) as unknown;
+    const payload: unknown = JSON.parse(fromBase64Url(encodedPayload));
 
     return isTokenPayload(payload) ? payload : null;
   } catch {

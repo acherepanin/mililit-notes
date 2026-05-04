@@ -83,8 +83,12 @@ export function ActivityColumnFilter({
         ref={buttonRef}
         onClick={() => setIsOpen((current) => !current)}
       >
-        <ListFilter size={13} />
-        {selected.length > 0 ? <span>{selected.length}</span> : null}
+        <span className="activity-table__filter-icon">
+          <ListFilter size={13} />
+        </span>
+        {selected.length > 0 ? (
+          <span className="activity-table__filter-count">{selected.length}</span>
+        ) : null}
       </button>
       {isOpen
         ? createPortal(

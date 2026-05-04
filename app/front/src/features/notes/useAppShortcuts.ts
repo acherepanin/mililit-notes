@@ -22,6 +22,7 @@ interface UseAppShortcutsParams {
   insertCopyField: () => void;
   insertSecretField: () => void;
   openLinkModal: () => void;
+  openTemplatesModal: () => void;
   saveEditorContent: () => void;
   setMobileTreeOpen: (value: boolean | ((current: boolean) => boolean)) => void;
   toggleCodeBlock: () => void;
@@ -33,6 +34,7 @@ export function useShortcutItems(t: Translator): ShortcutItem[] {
   return useMemo(
     () => [
       { keys: ['Ctrl', 'S'], label: t('shortcutSave') },
+      { keys: ['Ctrl', 'P'], label: t('templates') },
       { keys: ['Ctrl', 'Alt', 'N'], label: t('shortcutNewFocused') },
       { keys: ['Ctrl', '/'], label: t('shortcutSearch') },
       { keys: ['Ctrl', 'K'], label: t('shortcutLink') },
@@ -66,6 +68,7 @@ export function useAppShortcuts({
   insertCopyField,
   insertSecretField,
   openLinkModal,
+  openTemplatesModal,
   saveEditorContent,
   setMobileTreeOpen,
   toggleCodeBlock,
@@ -90,6 +93,12 @@ export function useAppShortcuts({
       }
 
       if (activeModal) {
+        return;
+      }
+
+      if (code === 'KeyP' && !event.altKey) {
+        event.preventDefault();
+        openTemplatesModal();
         return;
       }
 
@@ -194,6 +203,7 @@ export function useAppShortcuts({
     isEditorEditing,
     language,
     openLinkModal,
+    openTemplatesModal,
     saveEditorContent,
     selectedId,
     setMobileTreeOpen,

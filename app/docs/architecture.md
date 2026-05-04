@@ -18,10 +18,12 @@ Production-поток:
 ### Модули
 
 - `AppModule` - подключает `ConfigModule`, `ServeStaticModule`, `AuthModule`, `AdminModule`, `DatabaseModule`, `NotesModule`, `HealthController`.
-- `DatabaseModule` - singleton `DatabaseService`.
+- `DatabaseModule` - singleton `DatabaseService` and shared `AttachmentFilesService`.
 - `AuthModule` - login, token verification, текущий пользователь, preferences.
 - `NotesModule` - CRUD и move заметок текущего пользователя.
-- `AdminModule` - пользователи, статистика, история действий.
+- `WorkspaceModule` - теги, корзина, версии, шаблоны, экспорт/импорт, вложения и публичные ссылки.
+- Backend увеличивает JSON body limit до 30 MB для base64-загрузки вложений; бизнес-лимит размера файла задается `MAX_UPLOAD_SIZE_MB`.
+- `AdminModule` - пользователи, история действий и статистика; агрегаты статистики вынесены в `AdminStatsService`.
 - `ActivityModule` - запись и чтение audit-событий.
 
 ### Конфигурация
@@ -36,6 +38,10 @@ Production-поток:
 - `ADMIN_PASSWORD`
 - `AUTH_SECRET`
 - `AUTH_TOKEN_TTL_SECONDS`
+- `SECRET_ENCRYPTION_KEY`
+- `UPLOAD_DIR`
+- `MAX_UPLOAD_SIZE_MB`
+- `ALLOWED_UPLOAD_EXTENSIONS`
 
 Парсинг чисел выполняется через `src/config/env.ts`.
 
@@ -84,6 +90,7 @@ base64urlPayload.signature
 - включает `journal_mode = WAL`;
 - включает `foreign_keys = ON`;
 - выполняет idempotent schema migration;
+- удаляет устаревшие колонки снятых функций при старте, если текущая SQLite поддерживает `ALTER TABLE ... DROP COLUMN`;
 - создает seed-admin, если таблица `users` пустая;
 - создает welcome note, если таблица `notes` пустая.
 
@@ -114,6 +121,11 @@ base64urlPayload.signature
 | `content_text` | `TEXT NOT NULL DEFAULT ''` | Plain text |
 | `parent_id` | `INTEGER REFERENCES notes(id) ON DELETE CASCADE` | Родительская заметка |
 | `position` | `INTEGER NOT NULL DEFAULT 0` | Позиция |
+| `is_favorite` | `INTEGER NOT NULL DEFAULT 0` | Избранное |
+| `is_pinned` | `INTEGER NOT NULL DEFAULT 0` | Закрепление |
+| `deleted_at` | `TEXT` | Soft delete |
+| `deleted_by` | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Кто удалил |
+| `delete_reason` | `TEXT` | Причина удаления |
 | `created_at` | `TEXT NOT NULL` | Создание |
 | `updated_at` | `TEXT NOT NULL` | Обновление |
 
@@ -121,6 +133,17 @@ base64urlPayload.signature
 
 - `idx_notes_user_parent`
 - `idx_notes_position`
+- `idx_notes_user_deleted`
+
+### Дополнительные Таблицы Workspace
+
+- `tags` и `note_tags` - глобальные теги пользователя и связь заметка-тег.
+- `note_versions` - версии заметок перед изменением; хранится максимум 80 последних версий на заметку, старые записи подчищаются автоматически, а при удалении заметки связанные версии удаляются явно.
+- `note_templates` - пользовательские и системные шаблоны.
+- `attachments` - метаданные файлов аккаунта: `note_id` может быть `NULL`, `user_id` всегда владелец файла, имя, MIME type, размер и `storage_path`; сами файлы лежат в `UPLOAD_DIR`. Связь с заметкой опциональная и использует `ON DELETE SET NULL`, поэтому окончательное удаление заметки отвязывает файлы, но не удаляет их. Физическая очистка файлов централизована в `AttachmentFilesService`; недоступные файлы логируются warning-сообщением и не ломают удаление записи из БД.
+- `share_links` - временные публичные ссылки с hash токена и публичным URL для повторного копирования активной ссылки.
+- `share_link_access_logs` - история открытий публичных ссылок.
+- `note_fts` - SQLite FTS5 virtual table для полнотекстового поиска.
 
 ### `activity_logs`
 
@@ -139,6 +162,9 @@ base64urlPayload.signature
 
 - `idx_activity_created`
 - `idx_activity_user`
+- `idx_activity_actor`
+
+Для активных публичных ссылок используется индекс `idx_share_links_active`.
 
 ## Backend Services
 
@@ -152,8 +178,34 @@ base64urlPayload.signature
 - `update(userId, id, dto)`;
 - `move(userId, id, dto)`;
 - `delete(userId, id)`.
+- `listTrash(userId)`;
+- `restore(userId, id)`;
+- `permanentDelete(userId, id)`;
+- `listVersions(userId, noteId)`;
+- `restoreVersion(userId, noteId, versionId)`;
+- `listTags(userId)`;
+- `createTag(userId, name)`;
+- `deleteTag(userId, tagId)`;
+- `updateTags(userId, noteId, tags)`;
+- `search(userId, query)`;
+- `rebuildSearchIndex(userId)`.
 
 Все операции проверяют ownership через `user_id`. Move запрещает перенос в самого себя и в потомка.
+Окончательное удаление заметки получает все дочерние записи одним recursive CTE и выполняет очистку версий, отвязку вложений, удаление записи и очистку FTS в одной транзакции.
+
+### `WorkspaceService`
+
+Отвечает за функции, которые не являются базовым CRUD заметки:
+
+- шаблоны заметок;
+- экспорт JSON в файл с зашифрованными `data-value` для secret/password/token copy fields;
+- импорт JSON из файла с восстановлением тегов, избранного, закрепления и parent-связей;
+- вложения и файловое хранилище: глобальный список файлов аккаунта, загрузка, привязка/отвязка к заметкам, список файлов заметки, переименование, скачивание, удаление и ZIP-архив без хранения бинарного содержимого в SQLite;
+- временные публичные ссылки.
+
+### `SecretFieldCryptoService`
+
+Шифрует и расшифровывает `data-value` у secret/password/token copy fields. Используется при сохранении и чтении заметок и шаблонов.
 
 ### `AdminService`
 
@@ -207,16 +259,21 @@ Backend не дает удалить собственный admin-аккаунт
 ### Notes Feature
 
 - `features/notes/useNotesWorkspace.ts` - загрузка дерева, выбранная заметка, draft, CRUD, drag-and-drop move.
-- `features/notes/Sidebar.tsx` - дерево, поиск, переключение на меню, настройки, выход.
+- `features/notes/Sidebar.tsx` - дерево, поиск, быстрый фильтр избранного, кнопка-фильтр тегов с portal-меню, верхний список быстрых ссылок на закрепленные заметки, переключение на меню, настройки, выход.
 - `features/notes/NotesTree.tsx` - рекурсивное дерево, inline rename, delete, drag-and-drop.
-- `features/notes/Topbar.tsx` - шапка заметки.
+- `features/notes/Topbar.tsx` - шапка заметки, ellipsis названия и активные индикаторы избранного, закрепления и тегов перед названием.
+- `features/notes/NoteHeaderMenu.tsx` - меню действий в шапке: icon-кнопки избранного, закрепления, сохранения и удаления, поиск, создание, inline-редактирование и удаление глобальных тегов.
 - `features/notes/useAppShortcuts.ts` - глобальные hotkeys и список подсказок.
+- `features/notes/NoteToolPanels.tsx` - компактные панели заметки: корзина, версии, шаблоны, ссылки доступа и файловый менеджер вложений.
+- `features/notes/attachmentsPanel.helpers.tsx` - общие чистые функции вложений: тип preview, иконки файлов, размер, base64, скачивание и ограничения окна просмотра.
+- `features/app/jsonBackup.ts` - runtime-валидация JSON backup и скачивание export-файла.
+- `features/share/PublicSharePage.tsx` - публичная страница `/share/<token>` без авторизации: показывает только содержимое заметки в preview-стиле.
 
 ### Editor
 
 - `editor/useNotebookEditor.ts` - создание Tiptap editor.
 - `editor/lowlight.ts` - lowlight instance с явным набором highlight.js grammars под поддерживаемые языки вместо импорта всего набора `all`.
-- `editor/RichTextToolbar.tsx` - toolbar редактора.
+- `editor/RichTextToolbar.tsx` - toolbar редактора и верхнее меню действий заметки.
 - `editor/CodeBlockView.tsx` - кастомный code block: язык, форматирование, нумерация строк.
 - `editor/editorCode.ts` - форматирование code block и selection-логика.
 - `editor/copyFieldLabels.ts` - labels для copy fields.
@@ -229,6 +286,9 @@ Backend не дает удалить собственный admin-аккаунт
 ### Admin Feature
 
 - `features/admin/AdminPanel.tsx` - контейнер админки, загружается через `React.lazy()` только при открытии панели администратора.
+- `features/admin/AdminUserCard.tsx` - строка редактирования пользователя.
+- `features/admin/AdminCreateUserModal.tsx` - модалка создания пользователя.
+- `features/admin/AdminStatsView.tsx` - вся вкладка статистики и локальные вычисления графиков.
 - `features/admin/ActivityColumnFilter.tsx` - portal-фильтр таблицы истории.
 - `features/admin/adminFilters.ts` - типы и empty state фильтров.
 
@@ -246,6 +306,7 @@ Frontend использует route/code splitting через `React.lazy()` и 
 - рабочая область `AuthenticatedApp` загружается отдельным chunk только после авторизации;
 - Tiptap editor, lowlight и notes workspace не попадают в login bundle;
 - `AdminPanel` загружается отдельным chunk только при переходе в панель администратора.
+- Инструменты заметки встроены в рабочий chunk редактора и больше не используют отдельное общее окно инструментов.
 - `vite.config.ts` дополнительно выделяет `editor-vendor`, `code-languages`, `icons` и общий `vendor` через `manualChunks`, чтобы тяжелые зависимости редактора и grammar-файлы не склеивались с прикладным кодом.
 - Подсветка кода импортирует только нужные grammars highlight.js; языки без отдельной grammar продолжают уходить в auto/plain fallback.
 

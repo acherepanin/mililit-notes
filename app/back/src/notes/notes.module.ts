@@ -5,10 +5,12 @@ import { AuthModule } from '../auth/auth.module';
 import { DatabaseModule } from '../infra/database.module';
 import { NotesController } from './notes.controller';
 import { NotesService } from './notes.service';
+import { SecretFieldCryptoService } from './secret-field-crypto.service';
 
 @Module({
   imports: [ActivityModule, AuthModule, DatabaseModule],
   controllers: [NotesController],
-  providers: [NotesService],
+  providers: [NotesService, SecretFieldCryptoService],
+  exports: [NotesService, SecretFieldCryptoService],
 })
 export class NotesModule {}

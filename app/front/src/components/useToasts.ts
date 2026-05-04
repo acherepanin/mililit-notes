@@ -6,10 +6,12 @@ export interface ToastItem {
   id: string;
   kind: ToastKind;
   message: string;
+  ttl: number;
   isClosing?: boolean;
 }
 
 const toastExitMs = 180;
+const maxVisibleToasts = 3;
 
 export function useToasts() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -23,14 +25,29 @@ export function useToasts() {
     }, toastExitMs);
   }, []);
 
-  const pushToast = useCallback(
-    (kind: ToastKind, message: string, ttl = 3200) => {
-      const id = crypto.randomUUID();
-      setToasts((items) => [...items, { id, kind, message }]);
-      window.setTimeout(() => dismiss(id), ttl);
-    },
-    [dismiss],
-  );
+  const pushToast = useCallback((kind: ToastKind, message: string, ttl = 3200) => {
+    const id = crypto.randomUUID();
+    const nextToast = { id, kind, message, ttl };
+
+    setToasts((items) => {
+      if (items.length < maxVisibleToasts) {
+        return [...items, nextToast];
+      }
+
+      const toastToClose = items.find((item) => !item.isClosing) ?? items[0];
+
+      window.setTimeout(() => {
+        setToasts((current) => [
+          ...current.filter((item) => item.id !== toastToClose.id).slice(-(maxVisibleToasts - 1)),
+          nextToast,
+        ]);
+      }, toastExitMs);
+
+      return items.map((item) =>
+        item.id === toastToClose.id ? { ...item, isClosing: true } : item,
+      );
+    });
+  }, []);
 
   return { toasts, pushToast, dismiss };
 }

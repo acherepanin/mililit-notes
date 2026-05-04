@@ -31,4 +31,46 @@ export interface AdminStatsResponse {
   activityTotal: number;
   lastLoginAt: string | null;
   activeUsersToday: number;
+  eventsLast24h: number;
+  attachmentsTotal: number;
+  attachmentsStorageBytes: number;
+  orphanAttachmentsTotal: number;
+  orphanAttachmentsBytes: number;
+  averageAttachmentBytes: number;
+  largestAttachmentBytes: number;
+  notesWithAttachmentsTotal: number;
+  noteVersionsTotal: number;
+  shareLinksActiveTotal: number;
+  activityRange: AdminStatsRange;
+  activityByDay: AdminActivityDay[];
+  topStorageUsers: AdminStorageUser[];
+  topActivityUsers: AdminActivityUser[];
+  fileTypes: AdminFileTypeStat[];
+}
+
+export type AdminStatsRange = 'day' | 'week' | 'month' | 'year';
+
+export interface AdminActivityDay {
+  date: string;
+  total: number;
+  login: number;
+  notes: number;
+  admin: number;
+}
+
+export interface AdminStorageUser {
+  username: string;
+  filesTotal: number;
+  storageBytes: number;
+}
+
+export interface AdminActivityUser {
+  username: string;
+  eventsTotal: number;
+}
+
+export interface AdminFileTypeStat {
+  type: string;
+  filesTotal: number;
+  storageBytes: number;
 }

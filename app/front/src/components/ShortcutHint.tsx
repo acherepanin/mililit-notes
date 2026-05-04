@@ -47,7 +47,7 @@ export function ShortcutHint({ label, items }: ShortcutHintProps) {
     const width = Math.min(360, window.innerWidth - 24);
     const left = Math.min(Math.max(rect.right - width, 12), window.innerWidth - width - 12);
     const spaceBelow = window.innerHeight - rect.bottom - 14;
-    const maxHeight = Math.max(220, Math.min(540, spaceBelow));
+    const maxHeight = Math.max(160, Math.min(340, spaceBelow));
 
     setPanelStyle({
       left,

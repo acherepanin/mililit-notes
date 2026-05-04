@@ -1,49 +1,69 @@
 import type { Editor } from '@tiptap/react';
 import {
   Bold,
+  BookTemplate,
   Code2,
   Clipboard,
   Eye,
   FilePenLine,
   Heading1,
   Heading2,
+  History,
   Italic,
   KeyRound,
   Link as LinkIcon,
   List,
   ListOrdered,
+  Paperclip,
   Quote,
   Redo2,
+  Share2,
   Underline as UnderlineIcon,
   Undo2,
 } from 'lucide-react';
 
 import { IconButton } from '../components/IconButton';
+import { ShortcutHint, type ShortcutItem } from '../components/ShortcutHint';
 import type { Translator } from '../i18n';
+import { useHorizontalWheel } from '../utils/horizontalWheel';
 
 interface RichTextToolbarProps {
   editor: Editor | null;
   t: Translator;
   isEditing: boolean;
+  hasSelectedNote: boolean;
+  shortcuts: ShortcutItem[];
   onModeChange: (isEditing: boolean) => void;
   onOpenLink: () => void;
   onInsertCopyField: () => void;
   onInsertSecretField: () => void;
+  onOpenVersions: () => void;
+  onOpenTemplates: () => void;
+  onOpenShareLinks: () => void;
+  onOpenAttachments: () => void;
 }
 
 export function RichTextToolbar({
   editor,
   t,
   isEditing,
+  hasSelectedNote,
+  shortcuts,
   onModeChange,
   onOpenLink,
   onInsertCopyField,
   onInsertSecretField,
+  onOpenVersions,
+  onOpenTemplates,
+  onOpenShareLinks,
+  onOpenAttachments,
 }: RichTextToolbarProps) {
   const disabled = !editor || !isEditing;
+  const noteActionDisabled = !editor || !hasSelectedNote;
+  const toolbarRef = useHorizontalWheel<HTMLDivElement>();
 
   return (
-    <div className="toolbar" aria-label={t('editorToolbar')}>
+    <div ref={toolbarRef} className="toolbar" aria-label={t('editorToolbar')}>
       <span className="toolbar__group" role="group" aria-label={t('editorMode')}>
         <IconButton
           label={t('viewMode')}
@@ -59,6 +79,7 @@ export function RichTextToolbar({
           disabled={!editor}
           onClick={() => onModeChange(true)}
         />
+        <ShortcutHint label={t('shortcuts')} items={shortcuts} />
       </span>
       <span className="toolbar__group" role="group" aria-label={t('textFormat')}>
         <IconButton
@@ -150,6 +171,32 @@ export function RichTextToolbar({
           icon={<Redo2 size={16} />}
           disabled={disabled}
           onClick={() => editor?.chain().focus().redo().run()}
+        />
+      </span>
+      <span className="toolbar__group" role="group" aria-label={t('noteActions')}>
+        <IconButton
+          label={t('versions')}
+          icon={<History size={16} />}
+          disabled={noteActionDisabled}
+          onClick={onOpenVersions}
+        />
+        <IconButton
+          label={t('templates')}
+          icon={<BookTemplate size={16} />}
+          disabled={!editor}
+          onClick={onOpenTemplates}
+        />
+        <IconButton
+          label={t('shareLinks')}
+          icon={<Share2 size={16} />}
+          disabled={noteActionDisabled}
+          onClick={onOpenShareLinks}
+        />
+        <IconButton
+          label={t('attachments')}
+          icon={<Paperclip size={16} />}
+          disabled={noteActionDisabled}
+          onClick={onOpenAttachments}
         />
       </span>
     </div>

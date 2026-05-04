@@ -182,6 +182,9 @@ interface Note {
   contentText: string;
   parentId: number | null;
   position: number;
+  isFavorite: boolean;
+  isPinned: boolean;
+  tags: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -194,6 +197,9 @@ interface NoteTreeNode {
   id: number;
   name: string;
   parentId: number | null;
+  isFavorite: boolean;
+  isPinned: boolean;
+  tags: string[];
   children: NoteTreeNode[];
 }
 ```
@@ -261,7 +267,9 @@ Request:
 {
   "name": "Переименовано",
   "contentHtml": "<p>Hello</p>",
-  "contentText": "Hello"
+  "contentText": "Hello",
+  "isFavorite": true,
+  "isPinned": false
 }
 ```
 
@@ -318,6 +326,258 @@ cURL:
 curl -s -X DELETE "$BASE_URL/notes/1" \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+### GET `/api/notes/trash`
+
+Возвращает корзину текущего пользователя.
+
+```bash
+curl -s "$BASE_URL/notes/trash" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST `/api/notes/:id/restore`
+
+Восстанавливает заметку из корзины.
+
+```bash
+curl -s -X POST "$BASE_URL/notes/1/restore" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### DELETE `/api/notes/:id/permanent`
+
+Окончательно удаляет заметку.
+
+```bash
+curl -s -X DELETE "$BASE_URL/notes/1/permanent" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### GET `/api/notes/search?q=sqlite`
+
+Полнотекстовый поиск по названию, тексту и тегам.
+
+```bash
+curl -s "$BASE_URL/notes/search?q=sqlite" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST `/api/notes/search/reindex`
+
+Пересобирает FTS5 индекс заметок текущего пользователя.
+
+```bash
+curl -s -X POST "$BASE_URL/notes/search/reindex" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### GET `/api/notes/tags`
+
+Список тегов текущего пользователя.
+
+```bash
+curl -s "$BASE_URL/notes/tags" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST `/api/notes/tags`
+
+Создает глобальный тег текущего пользователя или возвращает существующий тег с таким же именем.
+Имя нормализуется в нижний регистр.
+
+```json
+{
+  "name": "devops"
+}
+```
+
+```bash
+curl -s -X POST "$BASE_URL/notes/tags" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"devops"}'
+```
+
+### DELETE `/api/notes/tags/:tagId`
+
+Удаляет глобальный тег текущего пользователя и снимает его со всех заметок пользователя.
+Операция идемпотентная: повторное удаление уже отсутствующего тега возвращает успешный ответ.
+
+```bash
+curl -s -X DELETE "$BASE_URL/notes/tags/1" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### PATCH `/api/notes/tags/:tagId`
+
+Переименовывает глобальный тег текущего пользователя. Имя нормализуется в нижний регистр.
+Если тег с таким именем уже существует, связи заметок переносятся на существующий тег, а старый тег удаляется.
+
+```json
+{
+  "name": "prod"
+}
+```
+
+```bash
+curl -s -X PATCH "$BASE_URL/notes/tags/1" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"prod"}'
+```
+
+### PATCH `/api/notes/:id/tags`
+
+Назначает заметке только уже существующие глобальные теги текущего пользователя.
+Имена тегов нормализуются в нижний регистр.
+
+```json
+{
+  "tags": ["devops", "sqlite"]
+}
+```
+
+```bash
+curl -s -X PATCH "$BASE_URL/notes/1/tags" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tags":["devops","sqlite"]}'
+```
+
+### GET `/api/notes/:id/versions`
+
+Список версий заметки.
+
+Возвращает максимум 80 последних версий. Перед выдачей backend удаляет лишние старые версии этой заметки, если лимит был превышен.
+
+```bash
+curl -s "$BASE_URL/notes/1/versions" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST `/api/notes/:id/versions/:versionId/restore`
+
+Откатывает заметку к версии.
+
+```bash
+curl -s -X POST "$BASE_URL/notes/1/versions/2/restore" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## Workspace
+
+### Templates
+
+```bash
+curl -s "$BASE_URL/templates" -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST "$BASE_URL/templates" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Deploy","contentHtml":"<p>Steps</p>","contentText":"Steps"}'
+
+curl -s -X POST "$BASE_URL/notes/from-template" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"templateId":1,"parentId":null}'
+
+curl -s -X DELETE "$BASE_URL/templates/1" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### Export / Import API
+
+Frontend показывает действия `Экспорт JSON` и `Импорт JSON` в разделе `Управление заметками` бокового меню. Экспорт скачивает `.json` файл с активными заметками пользователя, включая `isFavorite`, `isPinned`, `tags`, `parentId` и пользовательские шаблоны; записи из корзины не включаются. Secret/password/token copy fields экспортируются с зашифрованным `data-value` формата `enc:v1:...`; визуальные `********` внутри HTML не используются для восстановления. Импорт принимает JSON-файл такого же формата, валидирует `notes`, восстанавливает теги, избранное, закрепление и связи родитель/дочерняя заметка.
+
+```bash
+curl -s "$BASE_URL/export/json" -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST "$BASE_URL/import/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"notes":[{"id":1,"name":"Imported","contentHtml":"<p>Text</p>","contentText":"Text","parentId":null,"isFavorite":true,"isPinned":false,"tags":["devops"]}]}'
+```
+
+### Attachments
+
+```bash
+curl -s "$BASE_URL/attachments" \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST "$BASE_URL/attachments" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"fileName":"global.env","mimeType":"text/plain","contentBase64":"VEVTVA=="}'
+
+curl -s -X POST "$BASE_URL/notes/1/attachments" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"noteId":1,"fileName":"config.env","mimeType":"text/plain","contentBase64":"VEVTVA=="}'
+
+curl -s "$BASE_URL/notes/1/attachments" \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X PATCH "$BASE_URL/attachments/1" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"fileName":"renamed-config.env"}'
+
+curl -s -X PATCH "$BASE_URL/attachments/1/note" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"noteId":2}'
+
+curl -s -X PATCH "$BASE_URL/attachments/1/note" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"noteId":null}'
+
+curl -L "$BASE_URL/attachments/1/download" \
+  -H "Authorization: Bearer $TOKEN" \
+  -o config.env
+
+curl -L "$BASE_URL/notes/1/attachments/archive" \
+  -H "Authorization: Bearer $TOKEN" \
+  -o attachments.zip
+
+curl -L "$BASE_URL/notes/1/attachments/archive?ids=1,2,3" \
+  -H "Authorization: Bearer $TOKEN" \
+  -o selected-attachments.zip
+
+curl -L "$BASE_URL/attachments/archive?ids=1,2,3" \
+  -H "Authorization: Bearer $TOKEN" \
+  -o account-attachments.zip
+
+curl -s -X DELETE "$BASE_URL/attachments/1" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Attachments belong to the current account. `noteId` is optional: `POST /attachments` uploads an account file without a note, while `POST /notes/:id/attachments` uploads and attaches the file to a note immediately. `PATCH /attachments/:id/note` attaches a file to another note or detaches it with `noteId: null`. Files are stored on disk in `UPLOAD_DIR`; SQLite stores only metadata and `storage_path`. JSON body limit is 30 MB, while file validation is controlled by `MAX_UPLOAD_SIZE_MB`. `GET /notes/:id/attachments/archive` builds a ZIP archive for one note; `GET /attachments/archive` builds an account-level ZIP. Optional `ids=1,2,3` limits the archive to selected files. Permanent note deletion detaches files instead of deleting them. Physical files are deleted only when the attachment itself is deleted or when an admin deletes the user account.
+
+### Share Links
+
+```bash
+curl -s "$BASE_URL/notes/1/share-links" \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X POST "$BASE_URL/notes/1/share-links" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ttlHours":24,"includeSecrets":true}'
+
+curl -s "$BASE_URL/share/<token>"
+
+# Frontend public page for a created link:
+# http://localhost:3000/share/<token>
+
+curl -s -X DELETE "$BASE_URL/share-links/1" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+`POST /notes/:id/share-links` returns `url: "/share/<token>"` for copying and opening in browser.
+`includeSecrets: true` keeps secret/password/token values available for copy buttons on the public page while the UI still masks them visually.
+`DELETE /share-links/:id` deletes the link immediately. Public API data is still loaded from `GET /share/<token>` under the `/api` prefix.
 
 ## Admin
 
@@ -456,9 +716,19 @@ curl -s "$BASE_URL/admin/activity?limit=50" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### GET `/api/admin/stats`
+### GET `/api/admin/stats?range=week`
 
 Агрегированная статистика.
+
+Query `range` управляет графиком активности:
+
+- `day` - последние 24 часа по часам;
+- `week` - последние 7 дней по дням, значение по умолчанию;
+- `month` - последние 30 дней по дням;
+- `year` - последние 12 месяцев по месяцам.
+
+Ответ включает общие счетчики, файловое хранилище, отвязанные от заметок файлы, активные публичные ссылки, активность за выбранный период, топ пользователей по объему файлов и топ пользователей по действиям.
+В `topActivityUsers.username` используется пользователь-цель события, затем инициатор события, а для удаленных пользователей возвращается `unknown`.
 
 Response `200`:
 
@@ -469,14 +739,54 @@ Response `200`:
   "notesTotal": 5,
   "activityTotal": 12,
   "lastLoginAt": "2026-05-02T09:16:23.000Z",
-  "activeUsersToday": 2
+  "activeUsersToday": 2,
+  "eventsLast24h": 4,
+  "attachmentsTotal": 8,
+  "attachmentsStorageBytes": 2457600,
+  "orphanAttachmentsTotal": 2,
+  "orphanAttachmentsBytes": 512000,
+  "averageAttachmentBytes": 307200,
+  "largestAttachmentBytes": 1048576,
+  "notesWithAttachmentsTotal": 3,
+  "noteVersionsTotal": 18,
+  "shareLinksActiveTotal": 1,
+  "activityRange": "week",
+  "activityByDay": [
+    {
+      "date": "2026-04-27",
+      "total": 3,
+      "login": 1,
+      "notes": 2,
+      "admin": 0
+    }
+  ],
+  "topStorageUsers": [
+    {
+      "username": "admin",
+      "filesTotal": 8,
+      "storageBytes": 2457600
+    }
+  ],
+  "topActivityUsers": [
+    {
+      "username": "admin",
+      "eventsTotal": 12
+    }
+  ],
+  "fileTypes": [
+    {
+      "type": "image",
+      "filesTotal": 3,
+      "storageBytes": 1048576
+    }
+  ]
 }
 ```
 
 cURL:
 
 ```bash
-curl -s "$BASE_URL/admin/stats" \
+curl -s "$BASE_URL/admin/stats?range=month" \
   -H "Authorization: Bearer $TOKEN"
 ```
 

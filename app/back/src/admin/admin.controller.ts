@@ -59,7 +59,7 @@ export class AdminController {
   }
 
   @Get('stats')
-  getStats(): AdminStatsResponse {
-    return this.adminService.getStats();
+  getStats(@Query('range') range?: string): AdminStatsResponse {
+    return this.adminService.getStats(range);
   }
 }

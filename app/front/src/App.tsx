@@ -5,6 +5,7 @@ import { ToastHost } from './components/ToastHost';
 import { useToasts } from './components/useToasts';
 import { LoginScreen } from './features/auth/LoginScreen';
 import { useAuth } from './features/auth/useAuth';
+import { PublicSharePage } from './features/share/PublicSharePage';
 import { createTranslator } from './i18n';
 import type { UserLanguage, UserTheme } from './types';
 
@@ -12,6 +13,12 @@ const AuthenticatedApp = lazy(() => import('./features/app/AuthenticatedApp'));
 
 const guestLanguageKey = 'notes.guest.language';
 const guestThemeKey = 'notes.guest.theme';
+
+function readPublicShareToken(): string | null {
+  const match = window.location.pathname.match(/^\/share\/([^/]+)$/);
+
+  return match ? decodeURIComponent(match[1]) : null;
+}
 
 function BootScreen() {
   return (
@@ -33,6 +40,7 @@ export function App() {
   const language = auth.user?.language ?? guestLanguage;
   const theme = auth.user?.theme ?? guestTheme;
   const t = useMemo(() => createTranslator(language), [language]);
+  const publicShareToken = useMemo(() => readPublicShareToken(), []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -54,12 +62,13 @@ export function App() {
         return;
       }
 
+      const nextT = createTranslator(nextLanguage);
       auth
         .updatePreferences({ language: nextLanguage })
-        .then(() => toasts.pushToast('success', t('preferencesSaved')))
-        .catch(() => toasts.pushToast('error', t('saveError')));
+        .then(() => toasts.pushToast('success', nextT('preferencesSaved')))
+        .catch(() => toasts.pushToast('error', nextT('saveError')));
     },
-    [auth, t, toasts],
+    [auth, toasts],
   );
 
   const updateTheme = useCallback(
@@ -88,6 +97,10 @@ export function App() {
     },
     [auth, t, toasts],
   );
+
+  if (publicShareToken) {
+    return <PublicSharePage token={publicShareToken} t={t} />;
+  }
 
   if (auth.isChecking) {
     return <BootScreen />;

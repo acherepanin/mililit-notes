@@ -61,12 +61,96 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         content_text TEXT NOT NULL DEFAULT '',
         parent_id INTEGER REFERENCES notes(id) ON DELETE CASCADE,
         position INTEGER NOT NULL DEFAULT 0,
+        is_favorite INTEGER NOT NULL DEFAULT 0,
+        is_pinned INTEGER NOT NULL DEFAULT 0,
+        deleted_at TEXT,
+        deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        delete_reason TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
-      CREATE INDEX IF NOT EXISTS idx_notes_user_parent ON notes(user_id, parent_id);
-      CREATE INDEX IF NOT EXISTS idx_notes_position ON notes(user_id, parent_id, position, name);
+      CREATE TABLE IF NOT EXISTS tags (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        color TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, name)
+      );
+
+      CREATE TABLE IF NOT EXISTS note_tags (
+        note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY(note_id, tag_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_tags_user_name ON tags(user_id, lower(name));
+      CREATE INDEX IF NOT EXISTS idx_note_tags_tag ON note_tags(tag_id, note_id);
+
+      CREATE TABLE IF NOT EXISTS note_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        content_html TEXT NOT NULL DEFAULT '',
+        content_text TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_note_versions_note ON note_versions(note_id, created_at DESC, id DESC);
+
+      CREATE TABLE IF NOT EXISTS note_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        content_html TEXT NOT NULL DEFAULT '',
+        content_text TEXT NOT NULL DEFAULT '',
+        is_system INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_note_templates_user ON note_templates(user_id, is_system, lower(name));
+
+      CREATE TABLE IF NOT EXISTS attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id INTEGER REFERENCES notes(id) ON DELETE SET NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        file_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+        size INTEGER NOT NULL,
+        storage_path TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments(note_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_attachments_user ON attachments(user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS share_links (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        public_url TEXT,
+        expires_at TEXT NOT NULL,
+        include_secrets INTEGER NOT NULL DEFAULT 0,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_accessed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_share_links_note ON share_links(note_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS share_link_access_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        share_link_id INTEGER NOT NULL REFERENCES share_links(id) ON DELETE CASCADE,
+        accessed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        user_agent TEXT,
+        ip_address TEXT
+      );
 
       CREATE TABLE IF NOT EXISTS activity_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,6 +177,35 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       'user_id',
       'ALTER TABLE notes ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE',
     );
+    this.ensureColumn(
+      'notes',
+      'is_favorite',
+      'ALTER TABLE notes ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'notes',
+      'is_pinned',
+      'ALTER TABLE notes ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn('notes', 'deleted_at', 'ALTER TABLE notes ADD COLUMN deleted_at TEXT');
+    this.ensureColumn(
+      'notes',
+      'deleted_by',
+      'ALTER TABLE notes ADD COLUMN deleted_by INTEGER REFERENCES users(id) ON DELETE SET NULL',
+    );
+    this.ensureColumn('notes', 'delete_reason', 'ALTER TABLE notes ADD COLUMN delete_reason TEXT');
+    this.ensureColumn(
+      'share_links',
+      'public_url',
+      'ALTER TABLE share_links ADD COLUMN public_url TEXT',
+    );
+    this.ensureAttachmentsDetachOnNoteDelete();
+    this.dropRemovedColumn('users', 'totp_secret');
+    this.dropRemovedColumn('users', 'totp_enabled');
+    this.dropRemovedColumn('users', 'totp_recovery_codes_hash');
+    this.createNotesIndexes();
+    this.createQueryIndexes();
+    this.createFtsTable();
   }
 
   private seedIfEmpty(): void {
@@ -174,5 +287,104 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     if (!columns.some((column) => column.name === columnName)) {
       this.connection.exec(sql);
     }
+  }
+
+  private dropRemovedColumn(tableName: string, columnName: string): void {
+    const columns = this.connection.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+      name: string;
+    }>;
+
+    if (!columns.some((column) => column.name === columnName)) {
+      return;
+    }
+
+    try {
+      this.connection.exec(`ALTER TABLE ${tableName} DROP COLUMN ${columnName}`);
+    } catch (caught) {
+      this.logger.warn(
+        `Could not drop removed column ${tableName}.${columnName}: ${(caught as Error).message}`,
+      );
+    }
+  }
+
+  private createFtsTable(): void {
+    try {
+      this.connection.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS note_fts USING fts5(
+          name,
+          content_text,
+          tags,
+          user_id UNINDEXED,
+          note_id UNINDEXED
+        );
+      `);
+    } catch (caught) {
+      this.logger.warn(`SQLite FTS5 is unavailable: ${(caught as Error).message}`);
+    }
+  }
+
+  private ensureAttachmentsDetachOnNoteDelete(): void {
+    const columns = this.connection.prepare('PRAGMA table_info(attachments)').all() as Array<{
+      name: string;
+      notnull: 0 | 1;
+    }>;
+    const foreignKeys = this.connection
+      .prepare('PRAGMA foreign_key_list(attachments)')
+      .all() as Array<{
+      from: string;
+      table: string;
+      on_delete: string;
+    }>;
+    const noteIdColumn = columns.find((column) => column.name === 'note_id');
+    const noteForeignKey = foreignKeys.find(
+      (foreignKey) => foreignKey.from === 'note_id' && foreignKey.table === 'notes',
+    );
+
+    if (noteIdColumn?.notnull === 0 && noteForeignKey?.on_delete.toUpperCase() === 'SET NULL') {
+      return;
+    }
+
+    this.connection.exec(`
+      PRAGMA foreign_keys = OFF;
+
+      DROP TABLE IF EXISTS attachments_next;
+
+      CREATE TABLE IF NOT EXISTS attachments_next (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        note_id INTEGER REFERENCES notes(id) ON DELETE SET NULL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        file_name TEXT NOT NULL,
+        mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+        size INTEGER NOT NULL,
+        storage_path TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      INSERT INTO attachments_next (id, note_id, user_id, file_name, mime_type, size, storage_path, created_at)
+      SELECT id, note_id, user_id, file_name, mime_type, size, storage_path, created_at
+      FROM attachments;
+
+      DROP TABLE attachments;
+      ALTER TABLE attachments_next RENAME TO attachments;
+      CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments(note_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_attachments_user ON attachments(user_id, created_at DESC);
+
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+
+  private createNotesIndexes(): void {
+    this.connection.exec(`
+      CREATE INDEX IF NOT EXISTS idx_notes_user_parent ON notes(user_id, parent_id);
+      CREATE INDEX IF NOT EXISTS idx_notes_user_deleted ON notes(user_id, deleted_at);
+      CREATE INDEX IF NOT EXISTS idx_notes_position ON notes(user_id, parent_id, position, name);
+    `);
+  }
+
+  private createQueryIndexes(): void {
+    this.connection.exec(`
+      CREATE INDEX IF NOT EXISTS idx_activity_actor ON activity_logs(actor_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_share_links_active ON share_links(revoked_at, expires_at);
+    `);
   }
 }

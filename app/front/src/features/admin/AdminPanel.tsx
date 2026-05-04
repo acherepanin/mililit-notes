@@ -1,38 +1,29 @@
 import {
-  Activity,
-  ArrowDownUp,
+  ArrowUpDown,
   BarChart3,
   History,
-  KeyRound,
   Menu,
-  NotebookText,
   RefreshCw,
-  Save,
   Search,
-  Shield,
-  Trash2,
   UserPlus,
   UsersRound,
-  Zap,
 } from 'lucide-react';
-import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { adminApi } from '../../api';
-import { CustomSelect } from '../../components/CustomSelect';
 import { IconButton } from '../../components/IconButton';
-import { Modal } from '../../components/Modal';
 import { TooltipText } from '../../components/TooltipText';
 import type { Translator } from '../../i18n';
 import type {
   ActivityLog,
   AdminStats,
+  AdminStatsRange,
   AdminUser,
   CreateAdminUserPayload,
   UpdateAdminUserPayload,
   UserLanguage,
-  UserRole,
 } from '../../types';
+import { useHorizontalWheel } from '../../utils/horizontalWheel';
 import { ActivityColumnFilter } from './ActivityColumnFilter';
 import {
   emptyActivityFilters,
@@ -40,6 +31,9 @@ import {
   type ActivityFilters,
   type ActivitySort,
 } from './adminFilters';
+import { AdminCreateUserModal } from './AdminCreateUserModal';
+import { AdminStatsView } from './AdminStatsView';
+import { AdminUserCard } from './AdminUserCard';
 
 type AdminTab = 'users' | 'activity' | 'stats';
 
@@ -67,9 +61,11 @@ export function AdminPanel({
   onSuccess,
 }: AdminPanelProps) {
   const [tab, setTab] = useState<AdminTab>('users');
+  const tabsRef = useHorizontalWheel<HTMLDivElement>();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [activity, setActivity] = useState<ActivityLog[]>([]);
   const [stats, setStats] = useState<AdminStats | null>(null);
+  const [activityRange, setActivityRange] = useState<AdminStatsRange>('week');
   const [createForm, setCreateForm] = useState<CreateAdminUserPayload>(emptyCreateForm);
   const [drafts, setDrafts] = useState<Record<number, UpdateAdminUserPayload>>({});
   const [userSearch, setUserSearch] = useState('');
@@ -118,7 +114,7 @@ export function AdminPanel({
       const [nextUsers, nextActivity, nextStats] = await Promise.all([
         adminApi.listUsers(),
         adminApi.listActivity(),
-        adminApi.getStats(),
+        adminApi.getStats(activityRange),
       ]);
       setUsers(nextUsers);
       setActivity(nextActivity);
@@ -139,7 +135,7 @@ export function AdminPanel({
     } finally {
       setIsLoading(false);
     }
-  }, [onError, t]);
+  }, [activityRange, onError, t]);
 
   useEffect(() => {
     void loadAdminData();
@@ -206,44 +202,6 @@ export function AdminPanel({
     setActivityFilters((current) => ({ ...current, [key]: [] }));
   };
 
-  const statItems = useMemo(
-    () =>
-      stats
-        ? [
-            {
-              icon: <UsersRound size={17} />,
-              label: t('adminUsers'),
-              tone: 'blue',
-              value: stats.usersTotal,
-            },
-            {
-              icon: <Shield size={17} />,
-              label: t('adminAdmins'),
-              tone: 'violet',
-              value: stats.adminsTotal,
-            },
-            {
-              icon: <NotebookText size={17} />,
-              label: t('adminNotes'),
-              tone: 'cyan',
-              value: stats.notesTotal,
-            },
-            {
-              icon: <Activity size={17} />,
-              label: t('adminEvents'),
-              tone: 'amber',
-              value: stats.activityTotal,
-            },
-            {
-              icon: <Zap size={17} />,
-              label: t('adminActiveToday'),
-              tone: 'rose',
-              value: stats.activeUsersToday,
-            },
-          ]
-        : [],
-    [stats, t],
-  );
   const visibleUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
 
@@ -301,25 +259,12 @@ export function AdminPanel({
       ),
     };
   }, [activity, getActivityActionLabel, language, t]);
-  const statsDerived = useMemo(() => {
-    if (!stats) {
-      return null;
-    }
-
-    const usersTotal = Math.max(stats.usersTotal, 1);
-    const maxVolume = Math.max(stats.notesTotal, stats.activityTotal, 1);
-
-    return {
-      adminPercent: Math.round((stats.adminsTotal / usersTotal) * 100),
-      activePercent: Math.round((stats.activeUsersToday / usersTotal) * 100),
-      notesPerUser: stats.usersTotal > 0 ? (stats.notesTotal / stats.usersTotal).toFixed(1) : '0',
-      eventsPerUser:
-        stats.usersTotal > 0 ? (stats.activityTotal / stats.usersTotal).toFixed(1) : '0',
-      notesWidth: `${Math.max(4, Math.round((stats.notesTotal / maxVolume) * 100))}%`,
-      eventsWidth: `${Math.max(4, Math.round((stats.activityTotal / maxVolume) * 100))}%`,
-    };
-  }, [stats]);
-  const getInitial = (username: string) => username.trim().slice(0, 1).toUpperCase() || 'U';
+  const changeCreateForm = useCallback((patch: Partial<CreateAdminUserPayload>) => {
+    setCreateForm((current) => ({ ...current, ...patch }));
+  }, []);
+  const changeUserDraft = useCallback((userId: number, patch: UpdateAdminUserPayload) => {
+    setDrafts((current) => ({ ...current, [userId]: { ...current[userId], ...patch } }));
+  }, []);
 
   return (
     <section className="admin-panel">
@@ -343,7 +288,7 @@ export function AdminPanel({
         </div>
       </header>
 
-      <div className="admin-tabs">
+      <div ref={tabsRef} className="admin-tabs">
         <button
           className={
             tab === 'users' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
@@ -391,72 +336,19 @@ export function AdminPanel({
           </div>
 
           <div className="admin-user-list">
-            {visibleUsers.map((user) => {
-              const draft = drafts[user.id] ?? {};
-              return (
-                <article
-                  className={`admin-user-card ${user.id === currentUserId ? 'admin-user-card--self' : ''}`}
-                  key={user.id}
-                >
-                  <div className="admin-user-card__profile">
-                    <span className="admin-user-card__avatar">{getInitial(user.username)}</span>
-                    <div className="admin-user-card__identity">
-                      <TooltipText value={user.username} className="admin-user-card__name-static" />
-                    </div>
-                  </div>
-
-                  <div className="admin-user-card__edit-group">
-                    <label className="admin-user-card__role-field">
-                      <Shield size={14} />
-                      <CustomSelect
-                        className="admin-user-card__role"
-                        label={t('role')}
-                        value={(draft.role ?? user.role) as UserRole}
-                        options={roleOptions}
-                        onChange={(nextRole) =>
-                          setDrafts((current) => ({
-                            ...current,
-                            [user.id]: { ...current[user.id], role: nextRole },
-                          }))
-                        }
-                      />
-                    </label>
-
-                    <label className="admin-user-card__password">
-                      <KeyRound size={14} />
-                      <input
-                        value={draft.password ?? ''}
-                        onChange={(event) =>
-                          setDrafts((current) => ({
-                            ...current,
-                            [user.id]: { ...current[user.id], password: event.target.value },
-                          }))
-                        }
-                        placeholder={t('adminNewPassword')}
-                        type="password"
-                        aria-label={t('adminNewPassword')}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="admin-user-card__actions">
-                    <IconButton
-                      label={t('save')}
-                      icon={<Save size={16} />}
-                      variant="primary"
-                      onClick={() => updateUser(user.id)}
-                    />
-                    <IconButton
-                      label={t('delete')}
-                      icon={<Trash2 size={16} />}
-                      variant="danger"
-                      onClick={() => deleteUser(user.id)}
-                      disabled={user.id === currentUserId}
-                    />
-                  </div>
-                </article>
-              );
-            })}
+            {visibleUsers.map((user) => (
+              <AdminUserCard
+                currentUserId={currentUserId}
+                draft={drafts[user.id] ?? {}}
+                key={user.id}
+                roleOptions={roleOptions}
+                t={t}
+                user={user}
+                onDelete={deleteUser}
+                onDraftChange={changeUserDraft}
+                onSave={updateUser}
+              />
+            ))}
             {visibleUsers.length === 0 ? (
               <div className="empty-state">{t('adminNoUsers')}</div>
             ) : null}
@@ -464,55 +356,15 @@ export function AdminPanel({
         </div>
       ) : null}
 
-      <Modal
+      <AdminCreateUserModal
+        form={createForm}
         isOpen={isCreateOpen}
-        title={t('adminCreateUser')}
-        closeLabel={t('close')}
+        roleOptions={roleOptions}
+        t={t}
         onClose={() => setIsCreateOpen(false)}
-      >
-        <div className="modal-form admin-create-modal">
-          <label className="field-shell">
-            <UsersRound size={15} />
-            <input
-              value={createForm.username}
-              onChange={(event) =>
-                setCreateForm((current) => ({ ...current, username: event.target.value }))
-              }
-              placeholder={t('username')}
-              aria-label={t('username')}
-            />
-          </label>
-          <label className="field-shell">
-            <KeyRound size={15} />
-            <input
-              value={createForm.password}
-              onChange={(event) =>
-                setCreateForm((current) => ({ ...current, password: event.target.value }))
-              }
-              placeholder={t('password')}
-              type="password"
-              aria-label={t('password')}
-            />
-          </label>
-          <label className="admin-create-modal__role">
-            <Shield size={15} />
-            <CustomSelect
-              label={t('role')}
-              value={createForm.role ?? 'user'}
-              options={roleOptions}
-              onChange={(nextRole) => setCreateForm((current) => ({ ...current, role: nextRole }))}
-            />
-          </label>
-          <div className="modal-actions">
-            <IconButton
-              label={t('adminCreateUser')}
-              icon={<UserPlus size={16} />}
-              variant="primary"
-              onClick={createUser}
-            />
-          </div>
-        </div>
-      </Modal>
+        onFormChange={changeCreateForm}
+        onSubmit={createUser}
+      />
 
       {tab === 'activity' ? (
         <div className="admin-activity-view">
@@ -558,7 +410,9 @@ export function AdminPanel({
                           setActivitySort((current) => (current === 'newest' ? 'oldest' : 'newest'))
                         }
                       >
-                        <ArrowDownUp size={13} />
+                        <span className="activity-table__sort-icon">
+                          <ArrowUpDown size={13} />
+                        </span>
                       </button>
                     </div>
                   </th>
@@ -637,76 +491,13 @@ export function AdminPanel({
       ) : null}
 
       {tab === 'stats' ? (
-        <div className="stats-view">
-          <div className="stats-grid">
-            {statItems.map(({ icon, label, tone, value }) => (
-              <div className={`stat-tile stat-tile--${tone}`} key={label}>
-                <div className="stat-tile__head">
-                  <span className="stat-tile__icon">{icon}</span>
-                  <span className="stat-tile__label">{label}</span>
-                </div>
-                <strong>{value}</strong>
-              </div>
-            ))}
-          </div>
-          {stats && statsDerived ? (
-            <div className="stats-analytics">
-              <section className="stats-chart-card">
-                <div>
-                  <span>{t('adminRoleShare')}</span>
-                  <strong>{statsDerived.adminPercent}%</strong>
-                </div>
-                <div
-                  className="stats-donut"
-                  style={{ '--chart-value': `${statsDerived.adminPercent}%` } as CSSProperties}
-                >
-                  <span>
-                    {stats.adminsTotal}/{stats.usersTotal}
-                  </span>
-                </div>
-              </section>
-              <section className="stats-chart-card">
-                <div>
-                  <span>{t('adminActiveShare')}</span>
-                  <strong>{statsDerived.activePercent}%</strong>
-                </div>
-                <div className="stats-bar">
-                  <span style={{ width: `${Math.max(4, statsDerived.activePercent)}%` }} />
-                </div>
-              </section>
-              <section className="stats-chart-card stats-chart-card--wide">
-                <div>
-                  <span>{t('adminWorkload')}</span>
-                  <strong>{t('adminVolume')}</strong>
-                </div>
-                <div className="stats-bars">
-                  <label>
-                    <span>{t('adminNotes')}</span>
-                    <i>
-                      <b style={{ width: statsDerived.notesWidth }} />
-                    </i>
-                    <em>{stats.notesTotal}</em>
-                  </label>
-                  <label>
-                    <span>{t('adminEvents')}</span>
-                    <i>
-                      <b style={{ width: statsDerived.eventsWidth }} />
-                    </i>
-                    <em>{stats.activityTotal}</em>
-                  </label>
-                </div>
-                <div className="stats-density">
-                  <span>
-                    {t('adminNotesPerUser')}: {statsDerived.notesPerUser}
-                  </span>
-                  <span>
-                    {t('adminEventsPerUser')}: {statsDerived.eventsPerUser}
-                  </span>
-                </div>
-              </section>
-            </div>
-          ) : null}
-        </div>
+        <AdminStatsView
+          activityRange={activityRange}
+          language={language}
+          stats={stats}
+          t={t}
+          onActivityRangeChange={setActivityRange}
+        />
       ) : null}
     </section>
   );
