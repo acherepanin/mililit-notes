@@ -1,16 +1,11 @@
 import {
   ArchiveRestore,
   Copy,
-  Download,
-  ExternalLink,
-  Eye,
   FileArchive,
   FilePlus2,
-  Link2,
   MoreVertical,
   NotebookText,
   Paperclip,
-  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -39,6 +34,7 @@ import type {
   NoteVersion,
   ShareLink,
 } from '../../types';
+import { AttachmentActionMenuOverlay, AttachmentPreviewOverlay } from './AttachmentOverlays';
 import {
   ATTACHMENT_MENU_HEIGHT,
   ATTACHMENT_MENU_WIDTH,
@@ -127,6 +123,7 @@ export function TrashPanel({ t, onSelectNote, onRefreshTree, onSuccess, onError 
       <label className="search-box note-tool-search">
         <Search size={15} />
         <input
+          autoComplete="off"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t('search')}
@@ -929,6 +926,7 @@ export function AttachmentsPanel({
         <label className="search-box attachments-manager__search">
           <Search size={14} />
           <input
+            autoComplete="off"
             value={query}
             placeholder={t('searchFiles')}
             onChange={(event) => setQuery(event.target.value.toLowerCase())}
@@ -1079,6 +1077,7 @@ export function AttachmentsPanel({
                   {editingId === attachment.id ? (
                     <input
                       autoFocus
+                      autoComplete="off"
                       value={editingName}
                       onBlur={() =>
                         runTool(
@@ -1144,219 +1143,84 @@ export function AttachmentsPanel({
           ) : null}
         </div>
 
-        {preview ? (
-          <aside
-            className="attachment-preview attachment-preview--floating"
-            draggable={false}
-            style={
-              previewFrame
-                ? {
-                    left: previewFrame.x,
-                    top: previewFrame.y,
-                    width: previewFrame.width,
-                    height: previewFrame.height,
-                  }
-                : undefined
-            }
-            onDragStart={(event) => event.preventDefault()}
-            onPointerDown={startPreviewMove}
-          >
-            <div className="attachment-preview__head">
-              <TooltipText
-                value={preview.attachment.fileName}
-                className="attachment-preview__title"
-              />
-              <div className="attachment-preview__actions">
-                <IconButton
-                  label={t('download')}
-                  icon={<Download size={15} />}
-                  onClick={() =>
-                    runTool(
-                      () => downloadFile(preview.attachment),
-                      onSuccess,
-                      onError,
-                      t('ready'),
-                      t('loadError'),
-                    )
-                  }
-                />
-                <IconButton
-                  label={t('close')}
-                  icon={<X size={15} />}
-                  onClick={() =>
-                    setPreview((current) => {
-                      if (current) URL.revokeObjectURL(current.url);
-                      return null;
-                    })
-                  }
-                />
-              </div>
-            </div>
-            <div className="attachment-preview__body">
-              {preview.kind === 'image' ? (
-                <img
-                  className="attachment-preview__media"
-                  src={preview.url}
-                  alt=""
-                  draggable={false}
-                />
-              ) : preview.kind === 'video' ? (
-                <video
-                  className="attachment-preview__media"
-                  src={preview.url}
-                  controls
-                  draggable={false}
-                />
-              ) : preview.kind === 'audio' ? (
-                <audio className="attachment-preview__audio" src={preview.url} controls />
-              ) : preview.kind === 'text' ? (
-                <pre className="attachment-preview__text">{preview.text}</pre>
-              ) : preview.kind === 'pdf' ? (
-                <iframe
-                  className="attachment-preview__frame"
-                  src={preview.url}
-                  title={preview.attachment.fileName}
-                />
-              ) : (
-                <div className="attachment-preview__unsupported">
-                  <FileArchive size={26} />
-                  <strong>{t('previewUnavailable')}</strong>
-                  <span>{t('unsupportedPreview')}</span>
-                  <IconButton
-                    label={t('download')}
-                    icon={<Download size={16} />}
-                    onClick={() =>
-                      runTool(
-                        () => downloadFile(preview.attachment),
-                        onSuccess,
-                        onError,
-                        t('ready'),
-                        t('loadError'),
-                      )
-                    }
-                  />
-                </div>
-              )}
-            </div>
-            {(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as ResizeEdge[]).map((edge) => (
-              <span
-                aria-hidden="true"
-                className={`attachment-preview__resize attachment-preview__resize--${edge}`}
-                key={edge}
-                onPointerDown={(event) => startPreviewResize(edge, event)}
-              />
-            ))}
-          </aside>
-        ) : null}
+        <AttachmentPreviewOverlay
+          frame={previewFrame}
+          preview={preview}
+          t={t}
+          onClose={() =>
+            setPreview((current) => {
+              if (current) URL.revokeObjectURL(current.url);
+              return null;
+            })
+          }
+          onDownload={(attachment) =>
+            runTool(() => downloadFile(attachment), onSuccess, onError, t('ready'), t('loadError'))
+          }
+          onPointerDown={startPreviewMove}
+          onResizeStart={startPreviewResize}
+        />
 
-        {actionMenu && actionMenuAttachment ? (
-          <div
-            className="attachment-tile__menu attachment-tile__menu--floating"
-            style={{ left: actionMenu.x, top: actionMenu.y }}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setActionMenu(null);
-                void runTool(
-                  () => openPreview(actionMenuAttachment),
-                  onSuccess,
-                  onError,
-                  t('ready'),
-                  t('loadError'),
-                );
-              }}
-            >
-              <Eye size={14} />
-              <TooltipText value={t('openPreview')} className="attachment-tile__menu-label" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActionMenu(null);
-                void runTool(
-                  () => openInBrowser(actionMenuAttachment),
-                  onSuccess,
-                  onError,
-                  t('ready'),
-                  t('loadError'),
-                );
-              }}
-            >
-              <ExternalLink size={14} />
-              <TooltipText value={t('openInBrowser')} className="attachment-tile__menu-label" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActionMenu(null);
-                beginRename(actionMenuAttachment);
-              }}
-            >
-              <Pencil size={14} />
-              <TooltipText value={t('rename')} className="attachment-tile__menu-label" />
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActionMenu(null);
-                void runTool(
-                  () => downloadFile(actionMenuAttachment),
-                  onSuccess,
-                  onError,
-                  t('ready'),
-                  t('loadError'),
-                );
-              }}
-            >
-              <Download size={14} />
-              <TooltipText value={t('download')} className="attachment-tile__menu-label" />
-            </button>
-            {isAccountScope && (actionMenuAttachment.noteId || selectedNoteId) ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setActionMenu(null);
-                  void runTool(
-                    () =>
-                      attachToNote(
-                        actionMenuAttachment,
-                        actionMenuAttachment.noteId ? 'none' : String(selectedNoteId),
-                      ),
-                    onSuccess,
-                    onError,
-                    t('saved'),
-                    t('saveError'),
-                  );
-                }}
-              >
-                <Link2 size={14} />
-                <TooltipText
-                  value={actionMenuAttachment.noteId ? t('detachFromNote') : t('attachToNote')}
-                  className="attachment-tile__menu-label"
-                />
-              </button>
-            ) : null}
-            <button
-              className="attachment-tile__menu-danger"
-              type="button"
-              onClick={() => {
-                setActionMenu(null);
-                void runTool(
-                  () => deleteAttachments([actionMenuAttachment.id]),
-                  onSuccess,
-                  onError,
-                  t('delete'),
-                  t('deleteError'),
-                );
-              }}
-            >
-              <Trash2 size={14} />
-              <TooltipText value={t('delete')} className="attachment-tile__menu-label" />
-            </button>
-          </div>
-        ) : null}
+        <AttachmentActionMenuOverlay
+          attachment={actionMenuAttachment}
+          isAccountScope={isAccountScope}
+          menu={actionMenu}
+          selectedNoteId={selectedNoteId}
+          t={t}
+          onAttachToggle={(attachment) => {
+            setActionMenu(null);
+            void runTool(
+              () => attachToNote(attachment, attachment.noteId ? 'none' : String(selectedNoteId)),
+              onSuccess,
+              onError,
+              t('saved'),
+              t('saveError'),
+            );
+          }}
+          onDelete={(attachment) => {
+            setActionMenu(null);
+            void runTool(
+              () => deleteAttachments([attachment.id]),
+              onSuccess,
+              onError,
+              t('delete'),
+              t('deleteError'),
+            );
+          }}
+          onDownload={(attachment) => {
+            setActionMenu(null);
+            void runTool(
+              () => downloadFile(attachment),
+              onSuccess,
+              onError,
+              t('ready'),
+              t('loadError'),
+            );
+          }}
+          onOpenBrowser={(attachment) => {
+            setActionMenu(null);
+            void runTool(
+              () => openInBrowser(attachment),
+              onSuccess,
+              onError,
+              t('ready'),
+              t('loadError'),
+            );
+          }}
+          onOpenPreview={(attachment) => {
+            setActionMenu(null);
+            void runTool(
+              () => openPreview(attachment),
+              onSuccess,
+              onError,
+              t('ready'),
+              t('loadError'),
+            );
+          }}
+          onRename={(attachment) => {
+            setActionMenu(null);
+            beginRename(attachment);
+          }}
+        />
       </div>
     </div>
   );

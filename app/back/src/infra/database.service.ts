@@ -165,11 +165,69 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
       CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_logs(created_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_logs(user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS ai_user_settings (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        provider_name TEXT NOT NULL DEFAULT 'OpenAI-compatible',
+        base_url TEXT NOT NULL DEFAULT 'https://api.openai.com/v1',
+        model TEXT,
+        api_key_encrypted TEXT,
+        api_key_hint TEXT,
+        api_key_updated_at TEXT,
+        last_connection_check_at TEXT,
+        last_connection_check_status TEXT,
+        last_models_sync_at TEXT,
+        models_sync_status TEXT,
+        models_sync_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS ai_provider_models (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider_name TEXT NOT NULL,
+        model_id TEXT NOT NULL,
+        label TEXT NOT NULL,
+        tier TEXT NOT NULL DEFAULT 'unknown',
+        quality TEXT NOT NULL DEFAULT 'unknown',
+        speed TEXT NOT NULL DEFAULT 'unknown',
+        cost TEXT NOT NULL DEFAULT 'unknown',
+        capabilities TEXT NOT NULL DEFAULT '[]',
+        is_deprecated INTEGER NOT NULL DEFAULT 0,
+        provider_created_at INTEGER,
+        last_seen_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, provider_name, model_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_provider_models_user
+        ON ai_provider_models(user_id, provider_name, is_deprecated, lower(label));
+
+      CREATE TABLE IF NOT EXISTS ai_audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        target_type TEXT,
+        target_id INTEGER,
+        details TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_audit_logs_user
+        ON ai_audit_logs(user_id, created_at DESC, id DESC);
     `);
     this.ensureColumn(
       'users',
       'role',
       "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'",
+    );
+    this.ensureColumn(
+      'ai_provider_models',
+      'provider_created_at',
+      'ALTER TABLE ai_provider_models ADD COLUMN provider_created_at INTEGER',
     );
     this.ensureColumn('users', 'last_login_at', 'ALTER TABLE users ADD COLUMN last_login_at TEXT');
     this.ensureColumn(

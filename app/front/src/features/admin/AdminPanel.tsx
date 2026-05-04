@@ -95,6 +95,12 @@ export function AdminPanel({
           return t('actionNoteMove');
         case 'notes.delete':
           return t('actionNoteDelete');
+        case 'ai.settings.update':
+          return t('actionAiSettingsUpdate');
+        case 'ai.chat':
+          return t('actionAiChat');
+        case 'ai.tool.execute':
+          return t('actionAiToolExecute');
         case 'admin.user.create':
           return t('actionAdminUserCreate');
         case 'admin.user.update':
@@ -321,6 +327,7 @@ export function AdminPanel({
             <label className="admin-search-field">
               <Search size={15} />
               <input
+                autoComplete="off"
                 value={userSearch}
                 onChange={(event) => setUserSearch(event.target.value)}
                 placeholder={t('search')}
@@ -372,6 +379,7 @@ export function AdminPanel({
             <label className="admin-search-field">
               <Search size={15} />
               <input
+                autoComplete="off"
                 value={activitySearch}
                 onChange={(event) => setActivitySearch(event.target.value)}
                 placeholder={t('search')}

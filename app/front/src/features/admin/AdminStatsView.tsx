@@ -1,4 +1,13 @@
-import { FileX2, Gauge, HardDrive, Link2, UsersRound } from 'lucide-react';
+import {
+  BrainCircuit,
+  FileX2,
+  Gauge,
+  HardDrive,
+  Link2,
+  MessageSquareText,
+  MousePointerClick,
+  UsersRound,
+} from 'lucide-react';
 import type { CSSProperties } from 'react';
 import { useCallback, useMemo } from 'react';
 
@@ -94,9 +103,11 @@ export function AdminStatsView({
     const maxActivity = Math.max(...stats.activityByDay.map((day) => day.total), 1);
     const maxStorage = Math.max(...stats.topStorageUsers.map((user) => user.storageBytes), 1);
     const maxUserActivity = Math.max(...stats.topActivityUsers.map((user) => user.eventsTotal), 1);
+    const maxAiModelUsers = Math.max(...stats.topAiModels.map((model) => model.usersTotal), 1);
 
     return {
       maxActivity,
+      maxAiModelUsers,
       maxStorage,
       maxUserActivity,
       volumeRows: volumeRows.map((item) => ({
@@ -151,6 +162,10 @@ export function AdminStatsView({
       }
     },
     [t],
+  );
+  const formatDateTime = useCallback(
+    (value: string | null) => (value ? new Date(value).toLocaleString(dateLocale) : t('never')),
+    [dateLocale, t],
   );
 
   return (
@@ -226,6 +241,9 @@ export function AdminStatsView({
               <span>
                 {t('adminAdmins')}: {stats.activityByDay.reduce((sum, day) => sum + day.admin, 0)}
               </span>
+              <span>
+                {t('adminLlm')}: {stats.activityByDay.reduce((sum, day) => sum + day.ai, 0)}
+              </span>
             </div>
           </section>
           <section className="stats-chart-card stats-chart-card--wide">
@@ -276,6 +294,77 @@ export function AdminStatsView({
                 </span>
               ))}
             </div>
+          </section>
+          <section className="stats-chart-card stats-chart-card--ai">
+            <header className="stats-chart-card__head">
+              <span>{t('adminLlm')}</span>
+              <strong>{t('adminAiActivity')}</strong>
+            </header>
+            <div className="stats-ai-summary">
+              <div className="stats-ai-summary__metric stats-ai-summary__metric--primary">
+                <MessageSquareText size={17} />
+                <strong>{stats.aiChatsLast24h}</strong>
+                <span>{t('adminAiChats24h')}</span>
+              </div>
+              <div className="stats-ai-summary__metric">
+                <MousePointerClick size={17} />
+                <strong>{stats.aiToolExecutionsLast24h}</strong>
+                <span>{t('adminAiActions24h')}</span>
+              </div>
+              <div className="stats-ai-summary__metric">
+                <UsersRound size={17} />
+                <strong>{stats.aiActiveUsersLast24h}</strong>
+                <span>{t('adminAiActiveUsers24h')}</span>
+              </div>
+            </div>
+            <div className="stats-ai-details">
+              <span>
+                <b>{stats.aiEnabledUsersTotal}</b>
+                {t('adminAiEnabledUsers')}
+              </span>
+              <span>
+                <b>{stats.aiSelectedModelsTotal}</b>
+                {t('adminAiSelectedModels')}
+              </span>
+              <span>
+                <b>{stats.aiProvidersTotal}</b>
+                {t('adminAiProviders')}
+              </span>
+              <span>
+                <b>{stats.aiSyncedModelsTotal}</b>
+                {t('adminAiActiveModels')}
+              </span>
+              <span>
+                <b>{stats.aiDeprecatedModelsTotal}</b>
+                {t('adminAiDeprecatedModels')}
+              </span>
+            </div>
+            {stats.topAiModels.length > 0 ? (
+              <div className="stats-rank-list stats-rank-list--ai">
+                <span className="stats-ai-subtitle">{t('adminAiTopModels')}</span>
+                {stats.topAiModels.map((model) => (
+                  <label key={model.model}>
+                    <TooltipText value={model.model} />
+                    <i>
+                      <b
+                        style={{
+                          width: `${Math.max(
+                            4,
+                            Math.round((model.usersTotal / statsDerived.maxAiModelUsers) * 100),
+                          )}%`,
+                        }}
+                      />
+                    </i>
+                    <em>{model.usersTotal}</em>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+            <footer className="stats-ai-footer">
+              <BrainCircuit size={13} />
+              <span>{t('adminAiLastSync')}</span>
+              <TooltipText value={formatDateTime(stats.aiLastModelsSyncAt)} />
+            </footer>
           </section>
           <section className="stats-chart-card stats-chart-card--wide">
             <header className="stats-chart-card__head">

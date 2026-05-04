@@ -28,7 +28,9 @@
 - [docs/functionality.md](./docs/functionality.md) - пользовательский функционал, роли, админка, редактор, hotkeys.
 - [docs/api.md](./docs/api.md) - REST API, DTO, ошибки, cURL.
 - [docs/architecture.md](./docs/architecture.md) - модули, сервисы, SQLite-схема, frontend-структура.
+- [docs/ui.md](./docs/ui.md) - UI-компоненты, tooltip/select/modal/toast правила, запрет native UI там, где есть кастомные компоненты.
 - [docs/deployment.md](./docs/deployment.md) - локальный запуск, Docker, Compose, VM deploy, backup.
+- [docs/ai_ui_plan.md](./docs/ai_ui_plan.md) - план и текущий статус Notes AI.
 
 ## Проверки
 
@@ -61,6 +63,7 @@ npm run build:all
 
 - После каждой доработки актуализировать документацию в `docs`.
 - После каждой доработки собирать frontend и backend.
+- После любого добавления, удаления или изменения функционала проверять стартовый prompt Notes AI и при необходимости актуализировать его. В prompt должны подробно отражаться актуальные API, UI-возможности, правила работы с данными, доступные tool-calls и ограничения, к которым бот должен иметь доступ. Удаленный или легаси-функционал из prompt убирать, чтобы бот не опирался на несуществующие возможности.
 - Легаси и неактуальную информацию из документации удалять, а не оставлять рядом с новой.
 - Имена файлов документации писать нижним регистром, кроме `README.md`, `AGENTS.md`.
 - Любые изображения для документации класть только в `docs/images`.
@@ -71,10 +74,12 @@ npm run build:all
 - После frontend-изменений обязательно билдить frontend, потому что production backend отдает `back/public`.
 - API-контракт документировать в `docs/api.md`.
 - Пользовательское поведение документировать в `docs/functionality.md`.
+- UI-компоненты, кастомные подсказки, dropdown, modal, toast и правила переиспользования документировать в `docs/ui.md`.
 - Запуск, Docker и VM deploy документировать в `docs/deployment.md`.
 - Модули, сервисы, схему БД и потоки данных документировать в `docs/architecture.md`.
 - UI должен оставаться компактным, кастомным, локализованным и без native `alert`, `prompt`, `confirm`.
 - Ошибки на frontend выводить через toast-alerting.
 - Все icon buttons должны иметь локализованные labels/tooltips.
+- Все JSX `<input>`, кроме `type="file"`, должны иметь явный `autoComplete`; реальные username/password формы должны иметь стабильные `name`, а password/API key поля должны быть внутри настоящего `form` со скрытым username через `.sr-only`, если видимого username нет. Frontend `npm run lint` включает `lint:dom` и должен ловить такие нарушения.
 - Права доступа проверять на backend. Скрытые кнопки на frontend не считаются защитой.
 - Все запросы заметок должны быть scoped по текущему `user_id`.

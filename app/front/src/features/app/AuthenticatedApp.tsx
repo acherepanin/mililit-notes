@@ -2,7 +2,7 @@ import { EditorContent } from '@tiptap/react';
 import { Link2, Trash2, Undo2 } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { notesApi, workspaceApi } from '../../api';
+import { aiApi, notesApi, workspaceApi } from '../../api';
 import { AmbientCubes } from '../../components/AmbientCubes';
 import { IconButton } from '../../components/IconButton';
 import { Modal } from '../../components/Modal';
@@ -12,9 +12,10 @@ import { EditorLinkTooltip } from '../../editor/EditorLinkTooltip';
 import { formatCurrentCodeBlock } from '../../editor/editorCode';
 import { useNotebookEditor } from '../../editor/useNotebookEditor';
 import type { Translator } from '../../i18n';
-import type { AuthUser, Tag, UserLanguage, UserTheme } from '../../types';
+import type { AiSettings, AuthUser, Tag, UserLanguage, UserTheme } from '../../types';
 import type { ToastKind } from '../../components/useToasts';
 import { escapeHtml } from '../../utils/html';
+import { AiAssistant } from '../ai/AiAssistant';
 import {
   AttachmentsPanel,
   ShareLinksPanel,
@@ -71,6 +72,8 @@ export default function AuthenticatedApp({
   const [activeView, setActiveView] = useState<WorkspaceView>('notes');
   const [isEditorEditing, setIsEditorEditing] = useState(false);
   const [globalTags, setGlobalTags] = useState<Tag[]>([]);
+  const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
+  const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkText, setLinkText] = useState('');
   const lastErrorRef = useRef<string | null>(null);
@@ -112,6 +115,13 @@ export default function AuthenticatedApp({
   useEffect(() => {
     refreshGlobalTags().catch(() => pushToast('error', t('loadError')));
   }, [pushToast, refreshGlobalTags, t]);
+
+  useEffect(() => {
+    aiApi
+      .getSettings()
+      .then(setAiSettings)
+      .catch(() => pushToast('error', t('loadError')));
+  }, [pushToast, t]);
 
   useEffect(() => {
     if (!editor) {
@@ -445,6 +455,20 @@ export default function AuthenticatedApp({
     setActiveModal({ type: 'trash' });
   }, []);
 
+  const toggleAi = useCallback(() => {
+    const enabled = !(aiSettings?.enabled ?? false);
+    aiApi
+      .updateSettings({ enabled })
+      .then((settings) => {
+        setAiSettings(settings);
+        pushToast('success', enabled ? t('aiEnabled') : t('aiDisabled'));
+        if (enabled && (!settings.hasApiKey || !settings.model)) {
+          setIsAiSettingsOpen(true);
+        }
+      })
+      .catch(() => pushToast('error', t('aiSaveError')));
+  }, [aiSettings?.enabled, pushToast, t]);
+
   const shortcutItems = useShortcutItems(t);
   useAppShortcuts({
     activeModal: Boolean(activeModal),
@@ -517,6 +541,8 @@ export default function AuthenticatedApp({
         onImportJson={importJsonFile}
         onOpenTrash={openTrashModal}
         onOpenGlobalAttachments={() => setActiveModal({ type: 'accountAttachments' })}
+        aiEnabled={aiSettings?.enabled ?? false}
+        onAiToggle={toggleAi}
         onLogout={onLogout}
       />
 
@@ -586,6 +612,44 @@ export default function AuthenticatedApp({
           </>
         )}
       </section>
+
+      <AiAssistant
+        settings={aiSettings}
+        t={t}
+        isSettingsOpen={isAiSettingsOpen}
+        onSettingsOpenChange={setIsAiSettingsOpen}
+        onSettingsChange={setAiSettings}
+        currentNote={
+          workspace.selectedNote
+            ? {
+                id: workspace.selectedNote.id,
+                name: workspace.draft.name || workspace.selectedNote.name,
+                contentHtml: workspace.draft.contentHtml,
+                contentText: workspace.draft.contentText,
+              }
+            : null
+        }
+        onActionApplied={async (noteId, actionName) => {
+          const [nodes] = await Promise.all([workspace.refreshTree(), refreshGlobalTags()]);
+
+          if (actionName === 'notes.delete') {
+            if (workspace.reconcileSelection(nodes) === null) {
+              editor?.commands.clearContent();
+            }
+            return;
+          }
+
+          if (!noteId) {
+            workspace.reconcileSelection(nodes);
+            return;
+          }
+
+          setActiveView('notes');
+          workspace.selectNote(noteId);
+          await workspace.loadNote(noteId);
+        }}
+        pushToast={pushToast}
+      />
 
       <Modal
         isOpen={activeModal?.type === 'delete'}
@@ -748,12 +812,14 @@ export default function AuthenticatedApp({
             value={linkUrl}
             onChange={(event) => setLinkUrl(event.target.value)}
             placeholder={t('linkUrl')}
+            autoComplete="url"
             autoFocus
           />
           <input
             value={linkText}
             onChange={(event) => setLinkText(event.target.value)}
             placeholder={t('linkText')}
+            autoComplete="off"
           />
           <div className="modal-actions">
             <IconButton

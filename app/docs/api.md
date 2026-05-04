@@ -579,6 +579,162 @@ curl -s -X DELETE "$BASE_URL/share-links/1" \
 `includeSecrets: true` keeps secret/password/token values available for copy buttons on the public page while the UI still masks them visually.
 `DELETE /share-links/:id` deletes the link immediately. Public API data is still loaded from `GET /share/<token>` under the `/api` prefix.
 
+## AI
+
+AI endpoints работают только для текущего пользователя и не отдают сохраненный API key обратно на frontend.
+Ключ хранится в БД зашифрованным через `AI_CREDENTIALS_ENCRYPTION_KEY`; в ответе есть только `hasApiKey` и безопасная маска `apiKeyHint`.
+
+### GET `/api/ai/settings`
+
+Возвращает настройки AI, состояние синхронизации моделей и список моделей текущего пользователя.
+В элементах `models[]` дополнительно возвращаются `score`, `speedScore`, `valueScore` и `sortRank`.
+Frontend использует `score` только для цветовой полоски эффективности без вывода числа, а `sortRank` - для сортировки новых семейств выше старых.
+`sortRank` считается на backend из семейства модели и `created` от provider, если provider вернул это поле.
+
+```bash
+curl -s "$BASE_URL/ai/settings" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### PATCH `/api/ai/settings`
+
+Сохраняет настройки AI. Поле `apiKey` передается только при создании или замене ключа.
+Чтобы удалить ключ, отправьте `clearApiKey: true`.
+
+```bash
+curl -s -X PATCH "$BASE_URL/ai/settings" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"providerName":"OpenAI-compatible","baseUrl":"https://api.openai.com/v1","model":"gpt-4.1-mini","apiKey":"sk-..."}'
+```
+
+Удаление ключа:
+
+```bash
+curl -s -X PATCH "$BASE_URL/ai/settings" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"clearApiKey":true}'
+```
+
+Validation:
+
+- `baseUrl` должен быть валидным HTTPS URL;
+- `providerName`: optional string до 80 символов;
+- `model`: optional string до 180 символов или `null`;
+- `apiKey`: optional string до 3000 символов.
+
+### POST `/api/ai/models/sync`
+
+Синхронизирует список моделей через OpenAI-compatible endpoint `GET <baseUrl>/models`.
+Модели, которые провайдер больше не возвращает, помечаются как устаревшие.
+
+```bash
+curl -s -X POST "$BASE_URL/ai/models/sync" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST `/api/ai/test-connection`
+
+Проверяет подключение к provider через синхронизацию моделей и обновляет `lastConnectionCheckAt`.
+
+```bash
+curl -s -X POST "$BASE_URL/ai/test-connection" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST `/api/ai/chat`
+
+Отправляет сообщение в выбранную модель через OpenAI-compatible endpoint `POST <baseUrl>/chat/completions`.
+AI может вернуть текстовый ответ или список действий `actions[]`. Readonly tool-calls выполняются сразу, а любые изменения заметок, тегов, шаблонов, версий или share links возвращаются как preview и требуют подтверждения через `POST /api/ai/actions/execute`.
+Запрос может содержать `currentNote`, чтобы backend и модель знали текущую выбранную заметку для команд вроде “измени текущую заметку” или “напиши текст в уже созданной заметке”.
+Developer prompt описывает доступные инструменты, схему заметок, формат `contentHtml/contentText`, правила форматирования, copy/secret fields и порядок работы с поиском/чтением/редактированием.
+Если передан `currentNote`, prompt включает `id`, `name`, `contentText` и `contentHtml` текущей заметки с ограничением размера.
+Frontend передает в `currentNote` актуальный draft редактора, поэтому AI-команды могут использовать текст, который пользователь уже набрал, но еще не сохранил вручную.
+AI chat работает по LLM-first схеме: backend не перехватывает команды редактирования заметок до модели. Выбранная модель получает developer prompt, `currentNote`, историю и запрос пользователя, после чего сама должна вернуть нужный tool-call.
+`currentNote` включает `id`, `name`, `contentHtml`, `contentText`. `contentHtml` нужен, чтобы команды добавления логина/пароля могли дописать secret/copy-поля к существующему содержимому заметки.
+Если `currentNote` не передан, но команда явно указывает имя заметки, модель должна использовать `notes.search`, затем `notes.read`, и только после этого возвращать mutation tool-call.
+Команды преобразования вроде “перенеси данные в секретные поля” используют `currentNote.contentText` и `currentNote.contentHtml`: модель сама извлекает значения из текста, например из строки `Логин - test, пароль - test12`, удаляет открытый текст с этими значениями и возвращает `notes.update` с copy/secret-полями.
+Одиночные подтверждения текстом (`да`, `ок`, `yes`) не выполняют tool-call. Пользователь подтверждает мутации только кнопкой в карточке действия.
+Backend не передает `temperature` в запрос чата, чтобы не ломать GPT-5/reasoning модели, которые могут не поддерживать sampling-параметры в выбранном режиме.
+Служебная инструкция отправляется как `developer` message, что совместимо с новыми OpenAI моделями в Chat Completions.
+Если provider возвращает ошибку, backend прокидывает короткий текст причины в 400-ответ.
+
+```bash
+curl -s -X POST "$BASE_URL/ai/chat" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Добавь в текущую заметку логин test, пароль qwerty","history":[],"currentNote":{"id":1,"name":"Test","contentHtml":"<p></p>","contentText":""}}'
+```
+
+Пример ответа с действием:
+
+```json
+{
+  "message": {
+    "role": "assistant",
+    "content": "Подтвердите действие: Создать заметку."
+  },
+  "actions": [
+    {
+      "name": "notes.create",
+      "title": "Создать заметку",
+      "description": "Будет создана заметка \"Новая заметка\".",
+      "payload": {
+        "name": "Новая заметка",
+        "contentHtml": "<p>Доступы</p>",
+        "contentText": "Доступы"
+      }
+    }
+  ]
+}
+```
+
+### POST `/api/ai/actions/execute`
+
+Выполняет подтвержденное AI-действие. Endpoint принимает только действия из registry текущего backend и всегда работает от имени текущего пользователя.
+Для `notes.update` backend требует хотя бы одно реальное поле изменения: `name`, `contentHtml` или `contentText`.
+
+```bash
+curl -s -X POST "$BASE_URL/ai/actions/execute" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"notes.create","payload":{"name":"Новая заметка","contentHtml":"<p>Текст</p>","contentText":"Текст"}}'
+```
+
+Ответ:
+
+```json
+{
+  "message": {
+    "role": "assistant",
+    "content": "Заметка создана."
+  },
+  "noteId": 12,
+  "refreshTree": true
+}
+```
+
+Поддержанные действия:
+
+- `notes.search`;
+- `notes.read`;
+- `notes.create`;
+- `notes.update`;
+- `notes.tags.set`;
+- `notes.favorite.set`;
+- `notes.pinned.set`;
+- `notes.delete`;
+- `notes.restore`;
+- `templates.list`;
+- `templates.createNote`;
+- `versions.list`;
+- `versions.restore`;
+- `attachments.list`;
+- `shareLinks.create`.
+
+Readonly `notes.read` возвращает модели не только метаданные, но и `contentText` заметки до 6000 символов, чтобы следующие ответы и мутации могли опираться на фактическое содержимое.
+
 ## Admin
 
 Все admin endpoints требуют роль `admin`.
@@ -594,9 +750,9 @@ curl -s -X DELETE "$BASE_URL/share-links/1" \
 interface AdminUser {
   id: number;
   username: string;
-  role: 'user' | 'admin';
-  language: 'ru' | 'en';
-  theme: 'light' | 'dark';
+  role: "user" | "admin";
+  language: "ru" | "en";
+  theme: "light" | "dark";
   lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -727,7 +883,7 @@ Query `range` управляет графиком активности:
 - `month` - последние 30 дней по дням;
 - `year` - последние 12 месяцев по месяцам.
 
-Ответ включает общие счетчики, файловое хранилище, отвязанные от заметок файлы, активные публичные ссылки, активность за выбранный период, топ пользователей по объему файлов и топ пользователей по действиям.
+Ответ включает общие счетчики, файловое хранилище, отвязанные от заметок файлы, активные публичные ссылки, LLM/Notes AI агрегаты, активность за выбранный период, топ пользователей по объему файлов, топ пользователей по действиям и топ выбранных LLM-моделей.
 В `topActivityUsers.username` используется пользователь-цель события, затем инициатор события, а для удаленных пользователей возвращается `unknown`.
 
 Response `200`:
@@ -750,6 +906,15 @@ Response `200`:
   "notesWithAttachmentsTotal": 3,
   "noteVersionsTotal": 18,
   "shareLinksActiveTotal": 1,
+  "aiEnabledUsersTotal": 1,
+  "aiSelectedModelsTotal": 1,
+  "aiProvidersTotal": 1,
+  "aiSyncedModelsTotal": 24,
+  "aiDeprecatedModelsTotal": 2,
+  "aiChatsLast24h": 5,
+  "aiToolExecutionsLast24h": 2,
+  "aiActiveUsersLast24h": 1,
+  "aiLastModelsSyncAt": "2026-05-05T09:30:00.000Z",
   "activityRange": "week",
   "activityByDay": [
     {
@@ -757,7 +922,8 @@ Response `200`:
       "total": 3,
       "login": 1,
       "notes": 2,
-      "admin": 0
+      "admin": 0,
+      "ai": 0
     }
   ],
   "topStorageUsers": [
@@ -771,6 +937,12 @@ Response `200`:
     {
       "username": "admin",
       "eventsTotal": 12
+    }
+  ],
+  "topAiModels": [
+    {
+      "model": "gpt-5.5",
+      "usersTotal": 1
     }
   ],
   "fileTypes": [

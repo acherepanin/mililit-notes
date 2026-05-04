@@ -17,7 +17,7 @@ Production-поток:
 
 ### Модули
 
-- `AppModule` - подключает `ConfigModule`, `ServeStaticModule`, `AuthModule`, `AdminModule`, `DatabaseModule`, `NotesModule`, `HealthController`.
+- `AppModule` - подключает `ConfigModule`, `ServeStaticModule`, `AuthModule`, `AdminModule`, `AiModule`, `DatabaseModule`, `NotesModule`, `HealthController`.
 - `DatabaseModule` - singleton `DatabaseService` and shared `AttachmentFilesService`.
 - `AuthModule` - login, token verification, текущий пользователь, preferences.
 - `NotesModule` - CRUD и move заметок текущего пользователя.
@@ -25,6 +25,7 @@ Production-поток:
 - Backend увеличивает JSON body limit до 30 MB для base64-загрузки вложений; бизнес-лимит размера файла задается `MAX_UPLOAD_SIZE_MB`.
 - `AdminModule` - пользователи, история действий и статистика; агрегаты статистики вынесены в `AdminStatsService`.
 - `ActivityModule` - запись и чтение audit-событий.
+- `AiModule` - изолированный AI-слой: настройки provider, шифрование AI API key, синхронизация моделей, chat gateway через OpenAI-compatible API и tool registry для действий с заметками.
 
 ### Конфигурация
 
@@ -39,6 +40,7 @@ Production-поток:
 - `AUTH_SECRET`
 - `AUTH_TOKEN_TTL_SECONDS`
 - `SECRET_ENCRYPTION_KEY`
+- `AI_CREDENTIALS_ENCRYPTION_KEY`
 - `UPLOAD_DIR`
 - `MAX_UPLOAD_SIZE_MB`
 - `ALLOWED_UPLOAD_EXTENSIONS`
@@ -98,36 +100,36 @@ base64urlPayload.signature
 
 ### `users`
 
-| Поле | Тип | Описание |
-| --- | --- | --- |
-| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | ID |
-| `username` | `TEXT NOT NULL UNIQUE` | Логин |
-| `password_hash` | `TEXT NOT NULL` | PBKDF2 hash |
-| `role` | `TEXT NOT NULL DEFAULT 'user'` | `user` или `admin` |
-| `language` | `TEXT NOT NULL DEFAULT 'ru'` | `ru` или `en` |
-| `theme` | `TEXT NOT NULL DEFAULT 'dark'` | `light` или `dark` |
-| `last_login_at` | `TEXT` | Последний вход |
-| `created_at` | `TEXT NOT NULL` | Создание |
-| `updated_at` | `TEXT NOT NULL` | Обновление |
+| Поле            | Тип                                 | Описание           |
+| --------------- | ----------------------------------- | ------------------ |
+| `id`            | `INTEGER PRIMARY KEY AUTOINCREMENT` | ID                 |
+| `username`      | `TEXT NOT NULL UNIQUE`              | Логин              |
+| `password_hash` | `TEXT NOT NULL`                     | PBKDF2 hash        |
+| `role`          | `TEXT NOT NULL DEFAULT 'user'`      | `user` или `admin` |
+| `language`      | `TEXT NOT NULL DEFAULT 'ru'`        | `ru` или `en`      |
+| `theme`         | `TEXT NOT NULL DEFAULT 'dark'`      | `light` или `dark` |
+| `last_login_at` | `TEXT`                              | Последний вход     |
+| `created_at`    | `TEXT NOT NULL`                     | Создание           |
+| `updated_at`    | `TEXT NOT NULL`                     | Обновление         |
 
 ### `notes`
 
-| Поле | Тип | Описание |
-| --- | --- | --- |
-| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | ID |
-| `user_id` | `INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE` | Владелец |
-| `name` | `TEXT NOT NULL` | Название |
-| `content_html` | `TEXT NOT NULL DEFAULT ''` | HTML редактора |
-| `content_text` | `TEXT NOT NULL DEFAULT ''` | Plain text |
-| `parent_id` | `INTEGER REFERENCES notes(id) ON DELETE CASCADE` | Родительская заметка |
-| `position` | `INTEGER NOT NULL DEFAULT 0` | Позиция |
-| `is_favorite` | `INTEGER NOT NULL DEFAULT 0` | Избранное |
-| `is_pinned` | `INTEGER NOT NULL DEFAULT 0` | Закрепление |
-| `deleted_at` | `TEXT` | Soft delete |
-| `deleted_by` | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Кто удалил |
-| `delete_reason` | `TEXT` | Причина удаления |
-| `created_at` | `TEXT NOT NULL` | Создание |
-| `updated_at` | `TEXT NOT NULL` | Обновление |
+| Поле            | Тип                                                       | Описание             |
+| --------------- | --------------------------------------------------------- | -------------------- |
+| `id`            | `INTEGER PRIMARY KEY AUTOINCREMENT`                       | ID                   |
+| `user_id`       | `INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE` | Владелец             |
+| `name`          | `TEXT NOT NULL`                                           | Название             |
+| `content_html`  | `TEXT NOT NULL DEFAULT ''`                                | HTML редактора       |
+| `content_text`  | `TEXT NOT NULL DEFAULT ''`                                | Plain text           |
+| `parent_id`     | `INTEGER REFERENCES notes(id) ON DELETE CASCADE`          | Родительская заметка |
+| `position`      | `INTEGER NOT NULL DEFAULT 0`                              | Позиция              |
+| `is_favorite`   | `INTEGER NOT NULL DEFAULT 0`                              | Избранное            |
+| `is_pinned`     | `INTEGER NOT NULL DEFAULT 0`                              | Закрепление          |
+| `deleted_at`    | `TEXT`                                                    | Soft delete          |
+| `deleted_by`    | `INTEGER REFERENCES users(id) ON DELETE SET NULL`         | Кто удалил           |
+| `delete_reason` | `TEXT`                                                    | Причина удаления     |
+| `created_at`    | `TEXT NOT NULL`                                           | Создание             |
+| `updated_at`    | `TEXT NOT NULL`                                           | Обновление           |
 
 Индексы:
 
@@ -144,19 +146,22 @@ base64urlPayload.signature
 - `share_links` - временные публичные ссылки с hash токена и публичным URL для повторного копирования активной ссылки.
 - `share_link_access_logs` - история открытий публичных ссылок.
 - `note_fts` - SQLite FTS5 virtual table для полнотекстового поиска.
+- `ai_user_settings` - AI-настройки пользователя: enable flag, provider/base URL/model, зашифрованный API key, безопасная маска ключа и состояние проверок/синхронизации.
+- `ai_provider_models` - модели, доступные конкретному пользователю и provider/key после синхронизации; старые модели помечаются `is_deprecated`, `provider_created_at` хранит `created` из provider, если оно пришло.
+- `ai_audit_logs` - отдельная таблица будущего расширенного журнала tool-действий AI; текущие выполнения инструментов пишутся в `activity_logs` как `ai.tool.execute`.
 
 ### `activity_logs`
 
-| Поле | Тип | Описание |
-| --- | --- | --- |
-| `id` | `INTEGER PRIMARY KEY AUTOINCREMENT` | ID |
-| `actor_id` | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Кто сделал |
-| `user_id` | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Кого касается |
-| `action` | `TEXT NOT NULL` | Код действия |
-| `target_type` | `TEXT NOT NULL` | Тип цели |
-| `target_id` | `INTEGER` | ID цели |
-| `details` | `TEXT NOT NULL DEFAULT '{}'` | JSON details |
-| `created_at` | `TEXT NOT NULL` | Время |
+| Поле          | Тип                                               | Описание      |
+| ------------- | ------------------------------------------------- | ------------- |
+| `id`          | `INTEGER PRIMARY KEY AUTOINCREMENT`               | ID            |
+| `actor_id`    | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Кто сделал    |
+| `user_id`     | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Кого касается |
+| `action`      | `TEXT NOT NULL`                                   | Код действия  |
+| `target_type` | `TEXT NOT NULL`                                   | Тип цели      |
+| `target_id`   | `INTEGER`                                         | ID цели       |
+| `details`     | `TEXT NOT NULL DEFAULT '{}'`                      | JSON details  |
+| `created_at`  | `TEXT NOT NULL`                                   | Время         |
 
 Индексы:
 
@@ -229,11 +234,68 @@ Backend не дает удалить собственный admin-аккаунт
 - `notes.update`;
 - `notes.move`;
 - `notes.delete`;
+- `ai.settings.update`;
+- `ai.chat`;
+- `ai.tool.execute`;
 - `admin.user.create`;
 - `admin.user.update`;
 - `admin.user.delete`.
 
 `list(limit)` нормализует limit в диапазон `1..200`.
+
+### `AiService`
+
+Отвечает за AI-настройки текущего пользователя:
+
+- `getSettings(userId)`;
+- `updateSettings(userId, dto)`;
+- `syncModels(userId)`;
+- `testConnection(userId)`;
+- `chat(userId, dto)`;
+- `executeAction(userId, dto)`.
+
+Сервис работает через `DatabaseService`, `AiCryptoService`, `AiToolsService` и `ActivityService`.
+Вызовы моделей идут через OpenAI-compatible HTTP API:
+
+- `GET <baseUrl>/models` для синхронизации;
+- `POST <baseUrl>/chat/completions` для чата.
+
+Chat-запрос отправляется без `temperature`, чтобы один и тот же gateway работал с GPT-5/reasoning моделями и OpenAI-compatible providers, которые не принимают sampling-параметры для части моделей. Служебная инструкция идет как `developer` message вместо `system`, что корректнее для новых OpenAI моделей в Chat Completions. Ошибка provider нормализуется в короткий `BadRequestException` без токенов и секретов.
+
+Если модель возвращает tool-call, `AiService` передает его в `AiToolsService`. Readonly tools выполняются сразу, а мутации возвращаются в UI как preview-действия и выполняются только через `POST /api/ai/actions/execute` после подтверждения пользователя. Backend не перехватывает команды локальными парсерами: модель сама читает текущий контекст, выбирает tool и формирует полный `contentHtml/contentText`.
+
+После синхронизации `AiService` пересчитывает локальные `score`, `speedScore`, `valueScore` и `sortRank` для каждой модели. Эти значения не приходят как готовый рейтинг от provider: frontend показывает только цветовую полоску эффективности, а `sortRank` использует для порядка моделей. `sortRank` учитывает семейство модели и `provider_created_at`, чтобы новые версии шли выше старых.
+
+`baseUrl` валидируется как HTTPS URL. API key не логируется и не возвращается клиенту.
+
+### `AiToolsService`
+
+Изолированный registry действий Notes AI. Сервис использует существующие `NotesService` и `WorkspaceService`, поэтому ownership и роли остаются на том же backend-слое, что и у обычного UI.
+
+Поддержанные tools:
+
+- `notes.search`;
+- `notes.read`;
+- `notes.create`;
+- `notes.update`;
+- `notes.tags.set`;
+- `notes.favorite.set`;
+- `notes.pinned.set`;
+- `notes.delete`;
+- `notes.restore`;
+- `templates.list`;
+- `templates.createNote`;
+- `versions.list`;
+- `versions.restore`;
+- `attachments.list`;
+- `shareLinks.create`.
+
+Имена tool-calls для provider отправляются в безопасном формате с `_`, а внутри приложения мапятся обратно в dotted names.
+
+### `AiCryptoService`
+
+Шифрует AI API key через AES-256-GCM и env `AI_CREDENTIALS_ENCRYPTION_KEY`.
+Полный ключ расшифровывается только на время запроса к provider.
 
 ## Frontend
 
@@ -241,6 +303,7 @@ Backend не дает удалить собственный admin-аккаунт
 
 - `src/App.tsx` - легкий bootstrap/auth слой: login screen, guest theme/language, toast-host и lazy-загрузка рабочей области после входа.
 - `features/app/AuthenticatedApp.tsx` - рабочая область после авторизации: notes workspace, editor, sidebar, модалки заметок и lazy-загрузка админки.
+- `features/ai/AiAssistant.tsx` - изолированный AI widget: плавающая кнопка, чат, настройки provider и карточки подтверждения AI-действий.
 - `src/api.ts` - typed API client и Bearer token.
 - `src/i18n.ts` - RU/EN словарь.
 - `src/types.ts` - общие frontend-типы.
@@ -266,6 +329,7 @@ Backend не дает удалить собственный admin-аккаунт
 - `features/notes/useAppShortcuts.ts` - глобальные hotkeys и список подсказок.
 - `features/notes/NoteToolPanels.tsx` - компактные панели заметки: корзина, версии, шаблоны, ссылки доступа и файловый менеджер вложений.
 - `features/notes/attachmentsPanel.helpers.tsx` - общие чистые функции вложений: тип preview, иконки файлов, размер, base64, скачивание и ограничения окна просмотра.
+- `features/notes/AttachmentOverlays.tsx` - overlay-компоненты вложений: плавающее окно просмотра файла и меню действий файла. `NoteToolPanels.tsx` оставляет бизнес-логику загрузки/удаления/переименования, а разметка overlay вынесена отдельно.
 - `features/app/jsonBackup.ts` - runtime-валидация JSON backup и скачивание export-файла.
 - `features/share/PublicSharePage.tsx` - публичная страница `/share/<token>` без авторизации: показывает только содержимое заметки в preview-стиле.
 

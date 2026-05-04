@@ -163,6 +163,7 @@ function createCopyFieldView(labels: CopyFieldLabels) {
         <input
           className="copy-field__label"
           aria-label={labels.fieldLabel}
+          autoComplete="off"
           value={label}
           placeholder={labels.fieldLabelPlaceholder}
           readOnly={!isEditable}
@@ -180,12 +181,15 @@ function createCopyFieldView(labels: CopyFieldLabels) {
           </a>
         ) : (
           <input
-            className="copy-field__value"
+            className={`copy-field__value ${
+              isEditable && secret ? 'copy-field__value--masked' : ''
+            }`}
             aria-label={labels.fieldValue}
+            autoComplete="off"
             value={displayedValue}
             placeholder={labels.fieldValuePlaceholder}
             readOnly={!isEditable}
-            type={isEditable && secret ? 'password' : 'text'}
+            type="text"
             onChange={(event) => updateAttributes({ value: event.target.value })}
           />
         )}

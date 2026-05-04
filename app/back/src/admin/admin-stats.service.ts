@@ -4,6 +4,7 @@ import { DatabaseService } from '../infra/database.service';
 import type {
   AdminActivityDay,
   AdminActivityUser,
+  AdminAiModelStat,
   AdminFileTypeStat,
   AdminStatsRange,
   AdminStatsResponse,
@@ -36,7 +37,16 @@ export class AdminStatsService {
             (SELECT COALESCE(MAX(size), 0) FROM attachments) as largestAttachmentBytes,
             (SELECT COUNT(DISTINCT note_id) FROM attachments WHERE note_id IS NOT NULL) as notesWithAttachmentsTotal,
             (SELECT COUNT(*) FROM note_versions) as noteVersionsTotal,
-            (SELECT COUNT(*) FROM share_links WHERE revoked_at IS NULL AND expires_at > @now) as shareLinksActiveTotal
+            (SELECT COUNT(*) FROM share_links WHERE revoked_at IS NULL AND expires_at > @now) as shareLinksActiveTotal,
+            (SELECT COUNT(*) FROM ai_user_settings WHERE enabled = 1) as aiEnabledUsersTotal,
+            (SELECT COUNT(*) FROM ai_user_settings WHERE model IS NOT NULL AND trim(model) != '') as aiSelectedModelsTotal,
+            (SELECT COUNT(DISTINCT provider_name) FROM ai_user_settings) as aiProvidersTotal,
+            (SELECT COUNT(*) FROM ai_provider_models WHERE is_deprecated = 0) as aiSyncedModelsTotal,
+            (SELECT COUNT(*) FROM ai_provider_models WHERE is_deprecated = 1) as aiDeprecatedModelsTotal,
+            (SELECT COUNT(*) FROM activity_logs WHERE action = 'ai.chat' AND created_at >= @lastDay) as aiChatsLast24h,
+            (SELECT COUNT(*) FROM activity_logs WHERE action = 'ai.tool.execute' AND created_at >= @lastDay) as aiToolExecutionsLast24h,
+            (SELECT COUNT(DISTINCT COALESCE(user_id, actor_id)) FROM activity_logs WHERE action LIKE 'ai.%' AND COALESCE(user_id, actor_id) IS NOT NULL AND created_at >= @lastDay) as aiActiveUsersLast24h,
+            (SELECT MAX(last_models_sync_at) FROM ai_user_settings) as aiLastModelsSyncAt
         `,
       )
       .get({
@@ -45,7 +55,12 @@ export class AdminStatsService {
         today: now.toISOString().slice(0, 10),
       }) as Omit<
       AdminStatsResponse,
-      'activityRange' | 'activityByDay' | 'topStorageUsers' | 'topActivityUsers' | 'fileTypes'
+      | 'activityRange'
+      | 'activityByDay'
+      | 'topStorageUsers'
+      | 'topActivityUsers'
+      | 'topAiModels'
+      | 'fileTypes'
     >;
 
     return {
@@ -54,6 +69,7 @@ export class AdminStatsService {
       activityByDay: this.getActivityByDay(activityRange),
       topStorageUsers: this.getTopStorageUsers(),
       topActivityUsers: this.getTopActivityUsers(),
+      topAiModels: this.getTopAiModels(),
       fileTypes: this.getFileTypes(),
     };
   }
@@ -72,7 +88,8 @@ export class AdminStatsService {
             COUNT(*) as total,
             SUM(CASE WHEN action = 'auth.login' THEN 1 ELSE 0 END) as login,
             SUM(CASE WHEN action LIKE 'notes.%' THEN 1 ELSE 0 END) as notes,
-            SUM(CASE WHEN action LIKE 'admin.%' THEN 1 ELSE 0 END) as admin
+            SUM(CASE WHEN action LIKE 'admin.%' THEN 1 ELSE 0 END) as admin,
+            SUM(CASE WHEN action LIKE 'ai.%' THEN 1 ELSE 0 END) as ai
           FROM activity_logs
           WHERE created_at >= @since
           GROUP BY date
@@ -82,7 +99,7 @@ export class AdminStatsService {
     const byDate = new Map(rows.map((row) => [row.date, row]));
 
     return buckets.keys.map(
-      (date) => byDate.get(date) ?? { date, total: 0, login: 0, notes: 0, admin: 0 },
+      (date) => byDate.get(date) ?? { date, total: 0, login: 0, notes: 0, admin: 0, ai: 0 },
     );
   }
 
@@ -183,5 +200,22 @@ export class AdminStatsService {
         `,
       )
       .all() as AdminFileTypeStat[];
+  }
+
+  private getTopAiModels(): AdminAiModelStat[] {
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT
+            model,
+            COUNT(*) as usersTotal
+          FROM ai_user_settings
+          WHERE model IS NOT NULL AND trim(model) != ''
+          GROUP BY model
+          ORDER BY usersTotal DESC, lower(model) ASC
+          LIMIT 5
+        `,
+      )
+      .all() as AdminAiModelStat[];
   }
 }

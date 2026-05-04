@@ -1,5 +1,6 @@
 import {
   ArrowLeftToLine,
+  BrainCircuit,
   Check,
   ChevronDown,
   Download,
@@ -51,6 +52,8 @@ interface SidebarSettingsMenuProps {
   onOpenGlobalAttachments: () => void;
   onLanguageToggle: () => void;
   onThemeToggle: () => void;
+  aiEnabled: boolean;
+  onAiToggle: () => void;
 }
 
 function SidebarSettingsMenu({
@@ -68,6 +71,8 @@ function SidebarSettingsMenu({
   onOpenGlobalAttachments,
   onLanguageToggle,
   onThemeToggle,
+  aiEnabled,
+  onAiToggle,
 }: SidebarSettingsMenuProps) {
   const languageValue = language === 'ru' ? 'RU' : 'EN';
   const themeValue = theme === 'dark' ? t('dark') : t('light');
@@ -156,6 +161,22 @@ function SidebarSettingsMenu({
       </div>
       <div className="sidebar-settings-menu__group" role="group" aria-label={t('settings')}>
         <span className="sidebar-settings-menu__label">{t('settings')}</span>
+        <button
+          className={`sidebar-settings-menu__item ${aiEnabled ? 'sidebar-settings-menu__item--active' : ''}`}
+          type="button"
+          role="menuitem"
+          aria-pressed={aiEnabled}
+          onClick={onAiToggle}
+        >
+          <BrainCircuit size={14} />
+          <TooltipText value={t('aiAssistant')} className="sidebar-settings-menu__text" />
+          <strong>
+            <TooltipText
+              value={aiEnabled ? t('aiEnabledShort') : t('aiDisabledShort')}
+              className="sidebar-settings-menu__value"
+            />
+          </strong>
+        </button>
         <button
           className="sidebar-settings-menu__item"
           type="button"
@@ -366,6 +387,8 @@ interface SidebarProps {
   onImportJson: (file: File) => void;
   onOpenTrash: () => void;
   onOpenGlobalAttachments: () => void;
+  aiEnabled: boolean;
+  onAiToggle: () => void;
   isAdmin: boolean;
   activeView: 'notes' | 'admin';
   onOpenNotes: () => void;
@@ -407,6 +430,8 @@ export function Sidebar({
   onImportJson,
   onOpenTrash,
   onOpenGlobalAttachments,
+  aiEnabled,
+  onAiToggle,
   isAdmin,
   activeView,
   onOpenNotes,
@@ -465,6 +490,8 @@ export function Sidebar({
           onOpenGlobalAttachments={onOpenGlobalAttachments}
           onLanguageToggle={onLanguageToggle}
           onThemeToggle={onThemeToggle}
+          aiEnabled={aiEnabled}
+          onAiToggle={onAiToggle}
         />
       ) : (
         <>
@@ -472,6 +499,7 @@ export function Sidebar({
             <label className="search-box">
               <Search size={15} />
               <input
+                autoComplete="off"
                 value={query}
                 onChange={(event) => onQueryChange(event.target.value)}
                 placeholder={t('search')}

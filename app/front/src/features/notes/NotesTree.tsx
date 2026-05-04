@@ -112,6 +112,7 @@ export function NotesTree({
             {isEditing ? (
               <input
                 className="tree__name-input"
+                autoComplete="off"
                 value={draftName}
                 onChange={(event) => setDraftName(event.target.value)}
                 onKeyDown={(event) => {

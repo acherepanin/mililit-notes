@@ -4,6 +4,7 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'node:path';
 
 import { AdminModule } from './admin/admin.module';
+import { AiModule } from './ai/ai.module';
 import { HealthController } from './health.controller';
 import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './infra/database.module';
@@ -21,6 +22,7 @@ import { WorkspaceModule } from './workspace/workspace.module';
     }),
     AuthModule,
     AdminModule,
+    AiModule,
     DatabaseModule,
     NotesModule,
     WorkspaceModule,

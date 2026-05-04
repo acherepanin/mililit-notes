@@ -80,6 +80,7 @@ export function Topbar({
           ) : null}
           <input
             className="title-input"
+            autoComplete="off"
             value={draft.name}
             placeholder=""
             onChange={(event) => onDraftNameChange(event.target.value)}

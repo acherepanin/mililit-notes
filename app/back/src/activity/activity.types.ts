@@ -4,6 +4,9 @@ export type ActivityAction =
   | 'notes.update'
   | 'notes.move'
   | 'notes.delete'
+  | 'ai.settings.update'
+  | 'ai.chat'
+  | 'ai.tool.execute'
   | 'admin.user.create'
   | 'admin.user.update'
   | 'admin.user.delete';

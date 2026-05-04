@@ -20,21 +20,22 @@
 
 Локальный backend читает `app/back/.env`. Файл намеренно доступен для git и содержит dev-настройки.
 
-| Переменная | Значение по умолчанию | Описание |
-| --- | --- | --- |
-| `NODE_ENV` | `development` | Режим |
-| `PORT` | `3000` | HTTP-порт backend |
-| `DB_PATH` | `notes.sqlite` | SQLite-файл относительно `app/back`, если запуск идет из `app/back` |
-| `ADMIN_USERNAME` | `admin` | Логин seed-admin |
-| `ADMIN_PASSWORD` | `admin` | Пароль seed-admin |
-| `AUTH_SECRET` | dev-secret из `.env` | HMAC secret для token |
-| `AUTH_TOKEN_TTL_SECONDS` | `1209600` | TTL token, 14 дней |
-| `SECRET_ENCRYPTION_KEY` | dev-secret из `.env` | Ключ AES-256-GCM для secret/copy fields |
-| `UPLOAD_DIR` | `uploads` | Каталог файлов вложений |
-| `MAX_UPLOAD_SIZE_MB` | `25` | Максимальный размер одного вложения |
-| `ALLOWED_UPLOAD_EXTENSIONS` | список расширений | Разрешенные типы файлов для вложений |
+| Переменная                      | Значение по умолчанию | Описание                                                            |
+| ------------------------------- | --------------------- | ------------------------------------------------------------------- |
+| `NODE_ENV`                      | `development`         | Режим                                                               |
+| `PORT`                          | `3000`                | HTTP-порт backend                                                   |
+| `DB_PATH`                       | `notes.sqlite`        | SQLite-файл относительно `app/back`, если запуск идет из `app/back` |
+| `ADMIN_USERNAME`                | `admin`               | Логин seed-admin                                                    |
+| `ADMIN_PASSWORD`                | `admin`               | Пароль seed-admin                                                   |
+| `AUTH_SECRET`                   | dev-secret из `.env`  | HMAC secret для token                                               |
+| `AUTH_TOKEN_TTL_SECONDS`        | `1209600`             | TTL token, 14 дней                                                  |
+| `SECRET_ENCRYPTION_KEY`         | dev-secret из `.env`  | Ключ AES-256-GCM для secret/copy fields                             |
+| `AI_CREDENTIALS_ENCRYPTION_KEY` | dev-secret из `.env`  | Ключ AES-256-GCM для API-ключей AI providers                        |
+| `UPLOAD_DIR`                    | `uploads`             | Каталог файлов вложений                                             |
+| `MAX_UPLOAD_SIZE_MB`            | `25`                  | Максимальный размер одного вложения                                 |
+| `ALLOWED_UPLOAD_EXTENSIONS`     | список расширений     | Разрешенные типы файлов для вложений                                |
 
-Для production задайте сильный `AUTH_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` до первого запуска с пустой БД.
+Для production задайте сильный `AUTH_SECRET`, `SECRET_ENCRYPTION_KEY`, `AI_CREDENTIALS_ENCRYPTION_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` до первого запуска с пустой БД.
 
 ## Локальный Dev-Запуск
 
@@ -215,18 +216,18 @@ docker image prune -f
 
 Переменные:
 
-| Переменная | Описание |
-| --- | --- |
-| `COMPOSE_PROJECT_NAME` | Имя compose-проекта |
-| `APP_IMAGE` | Docker image для VM |
-| `APP_PORT` | Внешний порт |
-| `NOTES_DATA_DIR` | Директория данных на VM |
-| `REMOTE_HOST` | Host/IP VM |
-| `REMOTE_PORT` | SSH-порт |
-| `REMOTE_USER` | SSH-пользователь |
-| `REMOTE_HOME` | Домашняя директория пользователя на VM |
-| `REMOTE_DOCKER_DIR` | Директория на VM для `.env` и compose |
-| `REMOTE_SSH_KEY` | Локальный путь к SSH private key |
+| Переменная             | Описание                               |
+| ---------------------- | -------------------------------------- |
+| `COMPOSE_PROJECT_NAME` | Имя compose-проекта                    |
+| `APP_IMAGE`            | Docker image для VM                    |
+| `APP_PORT`             | Внешний порт                           |
+| `NOTES_DATA_DIR`       | Директория данных на VM                |
+| `REMOTE_HOST`          | Host/IP VM                             |
+| `REMOTE_PORT`          | SSH-порт                               |
+| `REMOTE_USER`          | SSH-пользователь                       |
+| `REMOTE_HOME`          | Домашняя директория пользователя на VM |
+| `REMOTE_DOCKER_DIR`    | Директория на VM для `.env` и compose  |
+| `REMOTE_SSH_KEY`       | Локальный путь к SSH private key       |
 
 Не коммитьте реальные production-секреты.
 

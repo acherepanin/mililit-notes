@@ -260,6 +260,7 @@ export function NoteHeaderMenu({
           <input
             className="note-header-menu__tag-edit"
             ref={tagInputRef}
+            autoComplete="off"
             value={tagDraft}
             onBlur={commitTagEditing}
             onChange={(event) => setTagDraft(event.target.value.toLowerCase())}
@@ -387,6 +388,7 @@ export function NoteHeaderMenu({
                 <label className="note-header-menu__tag-input">
                   <Search size={13} />
                   <input
+                    autoComplete="off"
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value.toLowerCase())}
                     placeholder={t('search')}

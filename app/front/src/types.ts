@@ -116,10 +116,20 @@ export interface AdminStats {
   notesWithAttachmentsTotal: number;
   noteVersionsTotal: number;
   shareLinksActiveTotal: number;
+  aiEnabledUsersTotal: number;
+  aiSelectedModelsTotal: number;
+  aiProvidersTotal: number;
+  aiSyncedModelsTotal: number;
+  aiDeprecatedModelsTotal: number;
+  aiChatsLast24h: number;
+  aiToolExecutionsLast24h: number;
+  aiActiveUsersLast24h: number;
+  aiLastModelsSyncAt: string | null;
   activityRange: AdminStatsRange;
   activityByDay: AdminActivityDay[];
   topStorageUsers: AdminStorageUser[];
   topActivityUsers: AdminActivityUser[];
+  topAiModels: AdminAiModelStat[];
   fileTypes: AdminFileTypeStat[];
 }
 
@@ -131,6 +141,7 @@ export interface AdminActivityDay {
   login: number;
   notes: number;
   admin: number;
+  ai: number;
 }
 
 export interface AdminStorageUser {
@@ -148,6 +159,11 @@ export interface AdminFileTypeStat {
   type: string;
   filesTotal: number;
   storageBytes: number;
+}
+
+export interface AdminAiModelStat {
+  model: string;
+  usersTotal: number;
 }
 
 export interface NoteVersion {
@@ -207,4 +223,79 @@ export interface ShareLink {
 export interface PublicShare {
   note: Pick<Note, 'id' | 'name' | 'contentHtml' | 'contentText' | 'updatedAt'>;
   expiresAt: string;
+}
+
+export type AiModelTier = 'free' | 'paid' | 'unknown';
+export type AiModelSignal = 'low' | 'medium' | 'high' | 'unknown';
+
+export interface AiModel {
+  id: string;
+  label: string;
+  tier: AiModelTier;
+  quality: AiModelSignal;
+  speed: AiModelSignal;
+  cost: AiModelSignal;
+  score: number;
+  speedScore: number;
+  valueScore: number;
+  sortRank: number;
+  capabilities: string[];
+  isDeprecated: boolean;
+}
+
+export interface AiSettings {
+  enabled: boolean;
+  providerName: string;
+  baseUrl: string;
+  model: string | null;
+  hasApiKey: boolean;
+  apiKeyHint: string | null;
+  apiKeyUpdatedAt: string | null;
+  lastConnectionCheckAt: string | null;
+  lastConnectionCheckStatus: string | null;
+  lastModelsSyncAt: string | null;
+  modelsSyncStatus: string | null;
+  modelsSyncError: string | null;
+  models: AiModel[];
+}
+
+export interface UpdateAiSettingsPayload {
+  enabled?: boolean;
+  providerName?: string;
+  baseUrl?: string;
+  model?: string | null;
+  apiKey?: string;
+  clearApiKey?: boolean;
+}
+
+export interface AiChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  actions?: AiToolAction[];
+}
+
+export interface AiToolAction {
+  name: string;
+  title: string;
+  description: string;
+  payload: Record<string, unknown>;
+  destructive?: boolean;
+}
+
+export interface AiChatResponse {
+  message: AiChatMessage;
+  actions?: AiToolAction[];
+}
+
+export interface AiCurrentNoteContext {
+  id: number;
+  name: string;
+  contentHtml: string;
+  contentText: string;
+}
+
+export interface AiToolExecutionResponse {
+  message: AiChatMessage;
+  noteId?: number;
+  refreshTree?: boolean;
 }

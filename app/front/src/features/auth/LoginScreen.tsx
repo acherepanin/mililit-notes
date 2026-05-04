@@ -45,6 +45,7 @@ export function LoginScreen({
           <label className="field-shell">
             <UserRound size={16} />
             <input
+              name="username"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
               placeholder={t('username')}
@@ -54,6 +55,7 @@ export function LoginScreen({
           <label className="field-shell">
             <Lock size={16} />
             <input
+              name="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder={t('password')}

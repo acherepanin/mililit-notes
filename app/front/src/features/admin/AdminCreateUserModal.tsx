@@ -37,6 +37,7 @@ export function AdminCreateUserModal({
         <label className="field-shell">
           <UsersRound size={15} />
           <input
+            name="username"
             value={form.username}
             onChange={(event) => onFormChange({ username: event.target.value })}
             placeholder={t('username')}
@@ -48,6 +49,7 @@ export function AdminCreateUserModal({
           <KeyRound size={15} />
           <input
             autoComplete="new-password"
+            name="password"
             value={form.password}
             onChange={(event) => onFormChange({ password: event.target.value })}
             placeholder={t('password')}

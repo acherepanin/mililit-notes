@@ -117,6 +117,20 @@ export function useNotesWorkspace(isEnabled: boolean) {
     setDraft(emptyDraft);
   }, []);
 
+  const reconcileSelection = useCallback(
+    (nodes: NoteTreeNode[]) => {
+      if (selectedId !== null && containsNodeId(nodes, selectedId)) {
+        return selectedId;
+      }
+
+      setSelectedId(null);
+      setSelectedNote(null);
+      setDraft(emptyDraft);
+      return null;
+    },
+    [selectedId],
+  );
+
   const selectFirstNote = useCallback(() => {
     setSelectedId((current) => current ?? getFirstNodeId(tree));
     setMobileTreeOpen(false);
@@ -289,6 +303,7 @@ export function useNotesWorkspace(isEnabled: boolean) {
     refreshTree,
     loadNote,
     replaceSelectedNote,
+    reconcileSelection,
     setActionError,
     selectNote,
     selectRoot,

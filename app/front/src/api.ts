@@ -2,6 +2,12 @@ import type {
   ActivityLog,
   AdminStats,
   AdminStatsRange,
+  AiChatMessage,
+  AiChatResponse,
+  AiCurrentNoteContext,
+  AiSettings,
+  AiToolAction,
+  AiToolExecutionResponse,
   AdminUser,
   Attachment,
   AuthUser,
@@ -17,6 +23,7 @@ import type {
   ShareLink,
   Tag,
   UpdateAdminUserPayload,
+  UpdateAiSettingsPayload,
   UpdateNotePayload,
   UserLanguage,
   UserTheme,
@@ -31,6 +38,38 @@ export class ApiError extends Error {
   ) {
     super(message);
   }
+}
+
+function parseApiErrorMessage(raw: string, status: number): string {
+  if (!raw) {
+    return `Request failed with status ${status}`;
+  }
+
+  try {
+    const payload = JSON.parse(raw) as unknown;
+
+    if (
+      typeof payload === 'object' &&
+      payload !== null &&
+      'message' in payload &&
+      typeof payload.message === 'string'
+    ) {
+      return payload.message;
+    }
+
+    if (
+      typeof payload === 'object' &&
+      payload !== null &&
+      'message' in payload &&
+      Array.isArray(payload.message)
+    ) {
+      return payload.message.filter((item) => typeof item === 'string').join(', ');
+    }
+  } catch {
+    return raw;
+  }
+
+  return raw;
 }
 
 export function setApiToken(token: string | null): void {
@@ -49,7 +88,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const details = await response.text();
-    throw new ApiError(details || `Request failed with status ${response.status}`, response.status);
+    throw new ApiError(parseApiErrorMessage(details, response.status), response.status);
   }
 
   return (await response.json()) as T;
@@ -66,7 +105,7 @@ async function requestBlob(url: string, init?: RequestInit): Promise<Blob> {
 
   if (!response.ok) {
     const details = await response.text();
-    throw new ApiError(details || `Request failed with status ${response.status}`, response.status);
+    throw new ApiError(parseApiErrorMessage(details, response.status), response.status);
   }
 
   return response.blob();
@@ -207,6 +246,28 @@ export const workspaceApi = {
 
 export const publicApi = {
   getShare: (token: string) => request<PublicShare>(`/api/share/${encodeURIComponent(token)}`),
+};
+
+export const aiApi = {
+  getSettings: () => request<AiSettings>('/api/ai/settings'),
+  updateSettings: (payload: UpdateAiSettingsPayload) =>
+    request<AiSettings>('/api/ai/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  syncModels: () => request<AiSettings>('/api/ai/models/sync', { method: 'POST' }),
+  testConnection: () =>
+    request<{ ok: boolean; checkedAt: string }>('/api/ai/test-connection', { method: 'POST' }),
+  chat: (message: string, history: AiChatMessage[], currentNote?: AiCurrentNoteContext | null) =>
+    request<AiChatResponse>('/api/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, history, currentNote }),
+    }),
+  executeAction: (action: AiToolAction) =>
+    request<AiToolExecutionResponse>('/api/ai/actions/execute', {
+      method: 'POST',
+      body: JSON.stringify({ name: action.name, payload: action.payload }),
+    }),
 };
 
 export const adminApi = {

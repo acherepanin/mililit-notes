@@ -41,10 +41,20 @@ export interface AdminStatsResponse {
   notesWithAttachmentsTotal: number;
   noteVersionsTotal: number;
   shareLinksActiveTotal: number;
+  aiEnabledUsersTotal: number;
+  aiSelectedModelsTotal: number;
+  aiProvidersTotal: number;
+  aiSyncedModelsTotal: number;
+  aiDeprecatedModelsTotal: number;
+  aiChatsLast24h: number;
+  aiToolExecutionsLast24h: number;
+  aiActiveUsersLast24h: number;
+  aiLastModelsSyncAt: string | null;
   activityRange: AdminStatsRange;
   activityByDay: AdminActivityDay[];
   topStorageUsers: AdminStorageUser[];
   topActivityUsers: AdminActivityUser[];
+  topAiModels: AdminAiModelStat[];
   fileTypes: AdminFileTypeStat[];
 }
 
@@ -56,6 +66,7 @@ export interface AdminActivityDay {
   login: number;
   notes: number;
   admin: number;
+  ai: number;
 }
 
 export interface AdminStorageUser {
@@ -73,4 +84,9 @@ export interface AdminFileTypeStat {
   type: string;
   filesTotal: number;
   storageBytes: number;
+}
+
+export interface AdminAiModelStat {
+  model: string;
+  usersTotal: number;
 }
