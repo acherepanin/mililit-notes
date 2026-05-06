@@ -20,20 +20,21 @@
 
 Локальный backend читает `app/back/.env`. Файл намеренно доступен для git и содержит dev-настройки.
 
-| Переменная                      | Значение по умолчанию | Описание                                                            |
-| ------------------------------- | --------------------- | ------------------------------------------------------------------- |
-| `NODE_ENV`                      | `development`         | Режим                                                               |
-| `PORT`                          | `3000`                | HTTP-порт backend                                                   |
-| `DB_PATH`                       | `notes.sqlite`        | SQLite-файл относительно `app/back`, если запуск идет из `app/back` |
-| `ADMIN_USERNAME`                | `admin`               | Логин seed-admin                                                    |
-| `ADMIN_PASSWORD`                | `admin`               | Пароль seed-admin                                                   |
-| `AUTH_SECRET`                   | dev-secret из `.env`  | HMAC secret для token                                               |
-| `AUTH_TOKEN_TTL_SECONDS`        | `1209600`             | TTL token, 14 дней                                                  |
-| `SECRET_ENCRYPTION_KEY`         | dev-secret из `.env`  | Ключ AES-256-GCM для secret/copy fields                             |
-| `AI_CREDENTIALS_ENCRYPTION_KEY` | dev-secret из `.env`  | Ключ AES-256-GCM для API-ключей AI providers                        |
-| `UPLOAD_DIR`                    | `uploads`             | Каталог файлов вложений                                             |
-| `MAX_UPLOAD_SIZE_MB`            | `25`                  | Максимальный размер одного вложения                                 |
-| `ALLOWED_UPLOAD_EXTENSIONS`     | список расширений     | Разрешенные типы файлов для вложений                                |
+| Переменная                      | Значение по умолчанию | Описание                                                                                             |
+| ------------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                      | `development`         | Режим                                                                                                |
+| `PORT`                          | `3000`                | HTTP-порт backend                                                                                    |
+| `DB_PATH`                       | `notes.sqlite`        | SQLite-файл относительно `app/back`, если запуск идет из `app/back`                                  |
+| `ADMIN_USERNAME`                | `admin`               | Логин seed-admin                                                                                     |
+| `ADMIN_PASSWORD`                | `admin`               | Пароль seed-admin                                                                                    |
+| `AUTH_SECRET`                   | dev-secret из `.env`  | HMAC secret для token                                                                                |
+| `AUTH_TOKEN_TTL_SECONDS`        | `1209600`             | TTL token, 14 дней                                                                                   |
+| `SECRET_ENCRYPTION_KEY`         | dev-secret из `.env`  | Ключ AES-256-GCM для секретных полей данных                                                          |
+| `AI_CREDENTIALS_ENCRYPTION_KEY` | dev-secret из `.env`  | Ключ AES-256-GCM для API-ключей AI providers                                                         |
+| `AI_TRANSCRIPTION_MODEL`        | `whisper-1`           | Модель распознавания голосовых сообщений Telegram/VK через OpenAI-compatible `/audio/transcriptions` |
+| `UPLOAD_DIR`                    | `uploads`             | Каталог файлов вложений                                                                              |
+| `MAX_UPLOAD_SIZE_MB`            | `25`                  | Максимальный размер одного вложения                                                                  |
+| `ALLOWED_UPLOAD_EXTENSIONS`     | список расширений     | Разрешенные типы файлов для вложений                                                                 |
 
 Для production задайте сильный `AUTH_SECRET`, `SECRET_ENCRYPTION_KEY`, `AI_CREDENTIALS_ENCRYPTION_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` до первого запуска с пустой БД.
 

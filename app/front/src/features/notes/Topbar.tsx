@@ -52,7 +52,17 @@ export function Topbar({
   return (
     <header className="topbar">
       <div className="title-block">
-        <div className={`title-line ${hasTitleIndicators ? 'title-line--with-indicators' : ''}`}>
+        <div className="title-line">
+          <input
+            className="title-input"
+            autoComplete="off"
+            value={draft.name}
+            placeholder=""
+            onChange={(event) => onDraftNameChange(event.target.value)}
+            disabled={!selectedNote || !isEditing}
+          />
+        </div>
+        <span className="title-meta">
           {hasTitleIndicators ? (
             <span className="title-indicators">
               {selectedNote?.isFavorite ? (
@@ -78,16 +88,6 @@ export function Topbar({
               ) : null}
             </span>
           ) : null}
-          <input
-            className="title-input"
-            autoComplete="off"
-            value={draft.name}
-            placeholder=""
-            onChange={(event) => onDraftNameChange(event.target.value)}
-            disabled={!selectedNote || !isEditing}
-          />
-        </div>
-        <span className="title-meta">
           {selectedNote
             ? `${t('updated')} ${new Date(selectedNote.updatedAt).toLocaleString(dateLocale)}`
             : ''}

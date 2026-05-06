@@ -31,6 +31,7 @@
 - [docs/ui.md](./docs/ui.md) - UI-компоненты, tooltip/select/modal/toast правила, запрет native UI там, где есть кастомные компоненты.
 - [docs/deployment.md](./docs/deployment.md) - локальный запуск, Docker, Compose, VM deploy, backup.
 - [docs/ai_ui_plan.md](./docs/ai_ui_plan.md) - план и текущий статус Notes AI.
+- [docs/bot_setup.md](./docs/bot_setup.md) - настройка Telegram/VK ботов и привязка аккаунтов.
 
 ## Проверки
 

@@ -4,6 +4,7 @@ import {
   FileArchive,
   FilePlus2,
   MoreVertical,
+  MousePointerClick,
   NotebookText,
   Paperclip,
   Plus,
@@ -34,6 +35,7 @@ import type {
   NoteVersion,
   ShareLink,
 } from '../../types';
+import { formatFileSize } from '../../utils/files';
 import { AttachmentActionMenuOverlay, AttachmentPreviewOverlay } from './AttachmentOverlays';
 import {
   ATTACHMENT_MENU_HEIGHT,
@@ -46,7 +48,6 @@ import {
   type ResizeEdge,
   clampPreviewFrame,
   fileToBase64,
-  formatFileSize,
   getAttachmentIcon,
   getFileExtension,
   getPreviewKind,
@@ -361,6 +362,7 @@ export function TemplatesPanel({
 export function ShareLinksPanel({ t, selectedNote, onSuccess, onError }: PanelProps) {
   const [shareLinks, setShareLinks] = useState<ShareLink[]>([]);
   const [includeSecrets, setIncludeSecrets] = useState(true);
+  const [oneTime, setOneTime] = useState(false);
   const selectedNoteId = selectedNote?.id ?? null;
 
   const refresh = useCallback(async () => {
@@ -391,6 +393,12 @@ export function ShareLinksPanel({ t, selectedNote, onSuccess, onError }: PanelPr
           onClick={() => setIncludeSecrets((current) => !current)}
         />
         <IconButton
+          label={t('oneTimeShareLink')}
+          icon={<MousePointerClick size={16} />}
+          variant={oneTime ? 'active' : 'plain'}
+          onClick={() => setOneTime((current) => !current)}
+        />
+        <IconButton
           label={t('createShareLink')}
           icon={<Share2 size={16} />}
           variant="primary"
@@ -402,6 +410,7 @@ export function ShareLinksPanel({ t, selectedNote, onSuccess, onError }: PanelPr
                 const link = await workspaceApi.createShareLink(selectedNote.id, {
                   ttlHours: 24,
                   includeSecrets,
+                  oneTime,
                 });
                 await navigator.clipboard.writeText(`${window.location.origin}${link.url}`);
                 await refresh();
@@ -422,6 +431,7 @@ export function ShareLinksPanel({ t, selectedNote, onSuccess, onError }: PanelPr
             <article className="note-tool-item note-tool-item--share" key={link.id}>
               <div className="note-tool-item__main">
                 <span>{new Date(link.expiresAt).toLocaleString()}</span>
+                {link.oneTime ? <small>{t('oneTimeShareLink')}</small> : null}
                 {shareUrl ? (
                   <a className="note-tool-link" href={shareUrl} target="_blank" rel="noreferrer">
                     <TooltipText value={shareUrl} className="note-tool-item__title" />

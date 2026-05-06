@@ -3,7 +3,6 @@ import {
   Bold,
   BookTemplate,
   Code2,
-  Clipboard,
   Eye,
   FilePenLine,
   Heading1,
@@ -35,8 +34,7 @@ interface RichTextToolbarProps {
   shortcuts: ShortcutItem[];
   onModeChange: (isEditing: boolean) => void;
   onOpenLink: () => void;
-  onInsertCopyField: () => void;
-  onInsertSecretField: () => void;
+  onInsertDataField: () => void;
   onOpenVersions: () => void;
   onOpenTemplates: () => void;
   onOpenShareLinks: () => void;
@@ -51,8 +49,7 @@ export function RichTextToolbar({
   shortcuts,
   onModeChange,
   onOpenLink,
-  onInsertCopyField,
-  onInsertSecretField,
+  onInsertDataField,
   onOpenVersions,
   onOpenTemplates,
   onOpenShareLinks,
@@ -147,16 +144,10 @@ export function RichTextToolbar({
           onClick={onOpenLink}
         />
         <IconButton
-          label={t('copyField')}
-          icon={<Clipboard size={16} />}
-          disabled={disabled}
-          onClick={onInsertCopyField}
-        />
-        <IconButton
-          label={t('credentialField')}
+          label={t('dataField')}
           icon={<KeyRound size={16} />}
           disabled={disabled}
-          onClick={onInsertSecretField}
+          onClick={onInsertDataField}
         />
       </span>
       <span className="toolbar__group" role="group" aria-label={t('history')}>

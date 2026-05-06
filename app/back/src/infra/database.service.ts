@@ -137,6 +137,8 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         public_url TEXT,
         expires_at TEXT NOT NULL,
         include_secrets INTEGER NOT NULL DEFAULT 0,
+        max_access_count INTEGER,
+        access_count INTEGER NOT NULL DEFAULT 0,
         revoked_at TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         last_accessed_at TEXT
@@ -169,6 +171,10 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       CREATE TABLE IF NOT EXISTS ai_user_settings (
         user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         enabled INTEGER NOT NULL DEFAULT 0,
+        allow_read_secrets INTEGER NOT NULL DEFAULT 0,
+        require_action_confirmation INTEGER NOT NULL DEFAULT 1,
+        daily_request_limit INTEGER,
+        daily_token_limit INTEGER,
         provider_name TEXT NOT NULL DEFAULT 'OpenAI-compatible',
         base_url TEXT NOT NULL DEFAULT 'https://api.openai.com/v1',
         model TEXT,
@@ -184,6 +190,28 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
 
+      CREATE TABLE IF NOT EXISTS ai_provider_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider_name TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        model TEXT,
+        api_key_encrypted TEXT,
+        api_key_hint TEXT,
+        api_key_updated_at TEXT,
+        last_connection_check_at TEXT,
+        last_connection_check_status TEXT,
+        last_models_sync_at TEXT,
+        models_sync_status TEXT,
+        models_sync_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, provider_name, base_url)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_provider_settings_user
+        ON ai_provider_settings(user_id, provider_name, base_url);
+
       CREATE TABLE IF NOT EXISTS ai_provider_models (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -194,6 +222,9 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         quality TEXT NOT NULL DEFAULT 'unknown',
         speed TEXT NOT NULL DEFAULT 'unknown',
         cost TEXT NOT NULL DEFAULT 'unknown',
+        input_price_per_1m REAL,
+        cached_input_price_per_1m REAL,
+        output_price_per_1m REAL,
         capabilities TEXT NOT NULL DEFAULT '[]',
         is_deprecated INTEGER NOT NULL DEFAULT 0,
         provider_created_at INTEGER,
@@ -205,6 +236,28 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
       CREATE INDEX IF NOT EXISTS idx_ai_provider_models_user
         ON ai_provider_models(user_id, provider_name, is_deprecated, lower(label));
+
+      CREATE TABLE IF NOT EXISTS ai_model_catalog (
+        model_id TEXT PRIMARY KEY,
+        label TEXT,
+        tier TEXT NOT NULL DEFAULT 'unknown',
+        quality TEXT NOT NULL DEFAULT 'unknown',
+        speed TEXT NOT NULL DEFAULT 'unknown',
+        cost TEXT NOT NULL DEFAULT 'unknown',
+        score INTEGER NOT NULL DEFAULT 50,
+        speed_score INTEGER NOT NULL DEFAULT 50,
+        value_score INTEGER NOT NULL DEFAULT 50,
+        sort_rank INTEGER NOT NULL DEFAULT 0,
+        input_price_per_1m REAL,
+        cached_input_price_per_1m REAL,
+        output_price_per_1m REAL,
+        capabilities TEXT NOT NULL DEFAULT '[]',
+        is_deprecated INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'builtin',
+        last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
 
       CREATE TABLE IF NOT EXISTS ai_audit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,6 +271,125 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
 
       CREATE INDEX IF NOT EXISTS idx_ai_audit_logs_user
         ON ai_audit_logs(user_id, created_at DESC, id DESC);
+
+      CREATE TABLE IF NOT EXISTS ai_usage_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider_name TEXT NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_logs_user
+        ON ai_usage_logs(user_id, created_at DESC, id DESC);
+
+      CREATE TABLE IF NOT EXISTS ai_note_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+        provider_name TEXT NOT NULL,
+        base_url TEXT NOT NULL,
+        model TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        vector_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, note_id, provider_name, base_url, model)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_note_embeddings_user
+        ON ai_note_embeddings(user_id, provider_name, base_url, model, note_id);
+
+      CREATE TABLE IF NOT EXISTS ai_bot_admin_settings (
+        provider TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        webhook_url TEXT,
+        bot_token_encrypted TEXT,
+        access_token_encrypted TEXT,
+        secret_encrypted TEXT,
+        group_id TEXT,
+        confirmation_code TEXT,
+        allow_secrets INTEGER NOT NULL DEFAULT 0,
+        require_confirmation INTEGER NOT NULL DEFAULT 1,
+        daily_request_limit INTEGER,
+        daily_read_limit INTEGER,
+        daily_write_limit INTEGER,
+        last_check_at TEXT,
+        last_check_status TEXT,
+        last_check_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS ai_bot_user_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        access_mode TEXT NOT NULL DEFAULT 'read',
+        allow_secrets INTEGER NOT NULL DEFAULT 0,
+        allow_note_read INTEGER NOT NULL DEFAULT 1,
+        allow_note_write INTEGER NOT NULL DEFAULT 0,
+        allow_note_delete INTEGER NOT NULL DEFAULT 0,
+        allow_tags INTEGER NOT NULL DEFAULT 0,
+        allow_templates INTEGER NOT NULL DEFAULT 0,
+        allow_versions INTEGER NOT NULL DEFAULT 0,
+        allow_attachments INTEGER NOT NULL DEFAULT 0,
+        allow_share_links INTEGER NOT NULL DEFAULT 0,
+        daily_request_limit INTEGER,
+        daily_read_limit INTEGER,
+        daily_write_limit INTEGER,
+        linked_external_id TEXT,
+        linked_username TEXT,
+        linked_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, provider)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_bot_user_settings_provider
+        ON ai_bot_user_settings(provider, linked_external_id);
+
+      CREATE TABLE IF NOT EXISTS ai_bot_link_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        code_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_bot_link_codes_user
+        ON ai_bot_link_codes(user_id, provider, expires_at DESC);
+
+      CREATE TABLE IF NOT EXISTS ai_bot_pending_actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        action_name TEXT NOT NULL,
+        action_payload TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_bot_pending_actions_user
+        ON ai_bot_pending_actions(user_id, provider, external_id, expires_at DESC, id DESC);
+
+      CREATE TABLE IF NOT EXISTS ai_bot_usage_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        action_name TEXT,
+        usage_count INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ai_bot_usage_logs_user
+        ON ai_bot_usage_logs(user_id, provider, kind, created_at DESC, id DESC);
     `);
     this.ensureColumn(
       'users',
@@ -229,6 +401,102 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       'provider_created_at',
       'ALTER TABLE ai_provider_models ADD COLUMN provider_created_at INTEGER',
     );
+    this.ensureColumn(
+      'ai_provider_models',
+      'input_price_per_1m',
+      'ALTER TABLE ai_provider_models ADD COLUMN input_price_per_1m REAL',
+    );
+    this.ensureColumn(
+      'ai_provider_models',
+      'cached_input_price_per_1m',
+      'ALTER TABLE ai_provider_models ADD COLUMN cached_input_price_per_1m REAL',
+    );
+    this.ensureColumn(
+      'ai_provider_models',
+      'output_price_per_1m',
+      'ALTER TABLE ai_provider_models ADD COLUMN output_price_per_1m REAL',
+    );
+    this.ensureColumn(
+      'ai_user_settings',
+      'allow_read_secrets',
+      'ALTER TABLE ai_user_settings ADD COLUMN allow_read_secrets INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'ai_user_settings',
+      'require_action_confirmation',
+      'ALTER TABLE ai_user_settings ADD COLUMN require_action_confirmation INTEGER NOT NULL DEFAULT 1',
+    );
+    this.ensureColumn(
+      'ai_user_settings',
+      'daily_request_limit',
+      'ALTER TABLE ai_user_settings ADD COLUMN daily_request_limit INTEGER',
+    );
+    this.ensureColumn(
+      'ai_user_settings',
+      'daily_token_limit',
+      'ALTER TABLE ai_user_settings ADD COLUMN daily_token_limit INTEGER',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'allow_note_read',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN allow_note_read INTEGER NOT NULL DEFAULT 1',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'allow_note_write',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN allow_note_write INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'allow_note_delete',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN allow_note_delete INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'allow_tags',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN allow_tags INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'allow_templates',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN allow_templates INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'allow_versions',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN allow_versions INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'allow_attachments',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN allow_attachments INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'allow_share_links',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN allow_share_links INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'ai_bot_admin_settings',
+      'daily_read_limit',
+      'ALTER TABLE ai_bot_admin_settings ADD COLUMN daily_read_limit INTEGER',
+    );
+    this.ensureColumn(
+      'ai_bot_admin_settings',
+      'daily_write_limit',
+      'ALTER TABLE ai_bot_admin_settings ADD COLUMN daily_write_limit INTEGER',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'daily_read_limit',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN daily_read_limit INTEGER',
+    );
+    this.ensureColumn(
+      'ai_bot_user_settings',
+      'daily_write_limit',
+      'ALTER TABLE ai_bot_user_settings ADD COLUMN daily_write_limit INTEGER',
+    );
+    this.backfillAiProviderSettings();
     this.ensureColumn('users', 'last_login_at', 'ALTER TABLE users ADD COLUMN last_login_at TEXT');
     this.ensureColumn(
       'notes',
@@ -256,6 +524,16 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       'share_links',
       'public_url',
       'ALTER TABLE share_links ADD COLUMN public_url TEXT',
+    );
+    this.ensureColumn(
+      'share_links',
+      'max_access_count',
+      'ALTER TABLE share_links ADD COLUMN max_access_count INTEGER',
+    );
+    this.ensureColumn(
+      'share_links',
+      'access_count',
+      'ALTER TABLE share_links ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0',
     );
     this.ensureAttachmentsDetachOnNoteDelete();
     this.dropRemovedColumn('users', 'totp_secret');
@@ -365,6 +643,50 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private backfillAiProviderSettings(): void {
+    this.connection.exec(`
+      INSERT INTO ai_provider_settings (
+        user_id,
+        provider_name,
+        base_url,
+        model,
+        api_key_encrypted,
+        api_key_hint,
+        api_key_updated_at,
+        last_connection_check_at,
+        last_connection_check_status,
+        last_models_sync_at,
+        models_sync_status,
+        models_sync_error,
+        created_at,
+        updated_at
+      )
+      SELECT
+        user_id,
+        provider_name,
+        base_url,
+        model,
+        api_key_encrypted,
+        api_key_hint,
+        api_key_updated_at,
+        last_connection_check_at,
+        last_connection_check_status,
+        last_models_sync_at,
+        models_sync_status,
+        models_sync_error,
+        created_at,
+        updated_at
+      FROM ai_user_settings
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM ai_provider_settings
+        WHERE ai_provider_settings.user_id = ai_user_settings.user_id
+          AND ai_provider_settings.provider_name = ai_user_settings.provider_name
+          AND ai_provider_settings.base_url = ai_user_settings.base_url
+      );
+    `);
+  }
+
   private createFtsTable(): void {
     try {
       this.connection.exec(`
@@ -442,6 +764,12 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   private createQueryIndexes(): void {
     this.connection.exec(`
       CREATE INDEX IF NOT EXISTS idx_activity_actor ON activity_logs(actor_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_activity_action_created
+        ON activity_logs(action, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_ai_usage_logs_created_user
+        ON ai_usage_logs(created_at DESC, user_id, provider_name, model);
+      CREATE INDEX IF NOT EXISTS idx_ai_bot_usage_logs_created
+        ON ai_bot_usage_logs(created_at DESC, provider, kind);
       CREATE INDEX IF NOT EXISTS idx_share_links_active ON share_links(revoked_at, expires_at);
     `);
   }

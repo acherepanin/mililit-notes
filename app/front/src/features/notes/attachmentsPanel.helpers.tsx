@@ -9,9 +9,6 @@ import {
 } from 'lucide-react';
 
 import type { Attachment } from '../../types';
-import { formatFileSize } from '../../utils/files';
-
-export { formatFileSize };
 
 export type PreviewKind = 'image' | 'pdf' | 'text' | 'video' | 'audio' | 'unsupported';
 

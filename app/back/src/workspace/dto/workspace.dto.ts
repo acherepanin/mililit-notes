@@ -89,4 +89,8 @@ export class CreateShareLinkDto {
   @IsOptional()
   @IsBoolean()
   includeSecrets?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  oneTime?: boolean;
 }

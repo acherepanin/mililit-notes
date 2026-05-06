@@ -37,6 +37,7 @@ FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV DB_PATH=/app/data/notes.sqlite
+ENV AI_TRANSCRIPTION_MODEL=whisper-1
 WORKDIR /app
 
 RUN groupadd --system notes \

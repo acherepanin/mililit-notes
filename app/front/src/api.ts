@@ -4,7 +4,13 @@ import type {
   AdminStatsRange,
   AiChatMessage,
   AiChatResponse,
+  AiBotAdminSettings,
+  AiBotConnectionCheck,
+  AiBotLinkCode,
+  AiBotProvider,
+  AiBotUserSettings,
   AiCurrentNoteContext,
+  AiMonthlyUsage,
   AiSettings,
   AiToolAction,
   AiToolExecutionResponse,
@@ -23,6 +29,8 @@ import type {
   ShareLink,
   Tag,
   UpdateAdminUserPayload,
+  UpdateAiBotAdminSettingsPayload,
+  UpdateAiBotUserSettingsPayload,
   UpdateAiSettingsPayload,
   UpdateNotePayload,
   UserLanguage,
@@ -235,7 +243,10 @@ export const workspaceApi = {
   deleteAttachment: (id: number) =>
     request<{ id: number }>(`/api/attachments/${id}`, { method: 'DELETE' }),
   listShareLinks: (noteId: number) => request<ShareLink[]>(`/api/notes/${noteId}/share-links`),
-  createShareLink: (noteId: number, payload: { ttlHours?: number; includeSecrets?: boolean }) =>
+  createShareLink: (
+    noteId: number,
+    payload: { ttlHours?: number; includeSecrets?: boolean; oneTime?: boolean },
+  ) =>
     request<ShareLink>(`/api/notes/${noteId}/share-links`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -258,15 +269,43 @@ export const aiApi = {
   syncModels: () => request<AiSettings>('/api/ai/models/sync', { method: 'POST' }),
   testConnection: () =>
     request<{ ok: boolean; checkedAt: string }>('/api/ai/test-connection', { method: 'POST' }),
-  chat: (message: string, history: AiChatMessage[], currentNote?: AiCurrentNoteContext | null) =>
+  getMonthlyUsage: () => request<AiMonthlyUsage>('/api/ai/usage/monthly'),
+  chat: (
+    message: string,
+    history: AiChatMessage[],
+    currentNote?: AiCurrentNoteContext | null,
+    signal?: AbortSignal,
+  ) =>
     request<AiChatResponse>('/api/ai/chat', {
       method: 'POST',
+      signal,
       body: JSON.stringify({ message, history, currentNote }),
     }),
   executeAction: (action: AiToolAction) =>
     request<AiToolExecutionResponse>('/api/ai/actions/execute', {
       method: 'POST',
       body: JSON.stringify({ name: action.name, payload: action.payload }),
+    }),
+  listBotAdminSettings: () => request<AiBotAdminSettings[]>('/api/ai/bots/admin-settings'),
+  updateBotAdminSettings: (provider: AiBotProvider, payload: UpdateAiBotAdminSettingsPayload) =>
+    request<AiBotAdminSettings>(`/api/ai/bots/admin-settings/${provider}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  testBotAdminConnection: (provider: AiBotProvider) =>
+    request<AiBotConnectionCheck>(`/api/ai/bots/admin-settings/${provider}/test`, {
+      method: 'POST',
+    }),
+  listBotUserSettings: () => request<AiBotUserSettings[]>('/api/ai/bots/me'),
+  updateBotUserSettings: (provider: AiBotProvider, payload: UpdateAiBotUserSettingsPayload) =>
+    request<AiBotUserSettings>(`/api/ai/bots/me/${provider}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  createBotLinkCode: (provider: AiBotProvider) =>
+    request<AiBotLinkCode>('/api/ai/bots/link-code', {
+      method: 'POST',
+      body: JSON.stringify({ provider }),
     }),
 };
 

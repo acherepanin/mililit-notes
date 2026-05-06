@@ -1,5 +1,21 @@
 import { EditorContent } from '@tiptap/react';
-import { Link2, Trash2, Undo2 } from 'lucide-react';
+import {
+  Bot,
+  FilePlus2,
+  Files,
+  Languages,
+  Link2,
+  Moon,
+  PanelLeft,
+  Save,
+  Search,
+  Settings,
+  ShieldCheck,
+  Sun,
+  Tags,
+  Trash2,
+  Undo2,
+} from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { aiApi, notesApi, workspaceApi } from '../../api';
@@ -16,6 +32,7 @@ import type { AiSettings, AuthUser, Tag, UserLanguage, UserTheme } from '../../t
 import type { ToastKind } from '../../components/useToasts';
 import { escapeHtml } from '../../utils/html';
 import { AiAssistant } from '../ai/AiAssistant';
+import { CommandPalette, type CommandPaletteItem } from './CommandPalette';
 import {
   AttachmentsPanel,
   ShareLinksPanel,
@@ -74,6 +91,8 @@ export default function AuthenticatedApp({
   const [globalTags, setGlobalTags] = useState<Tag[]>([]);
   const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
   const [isAiSettingsOpen, setIsAiSettingsOpen] = useState(false);
+  const [aiChatOpenSignal, setAiChatOpenSignal] = useState(0);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkText, setLinkText] = useState('');
   const lastErrorRef = useRef<string | null>(null);
@@ -150,31 +169,16 @@ export default function AuthenticatedApp({
     }
   }, [editor, pushToast, t, workspace]);
 
-  const insertCopyField = useCallback(() => {
+  const insertDataField = useCallback(() => {
     editor
       ?.chain()
       .focus()
       .insertContent({
         type: 'copyField',
         attrs: {
-          label: t('copy'),
+          label: t('fieldKindText'),
+          kind: 'text',
           value: '',
-        },
-      })
-      .run();
-  }, [editor, t]);
-
-  const insertSecretField = useCallback(() => {
-    editor
-      ?.chain()
-      .focus()
-      .insertContent({
-        type: 'copyField',
-        attrs: {
-          label: t('fieldKindPassword'),
-          value: '',
-          kind: 'password',
-          secret: true,
         },
       })
       .run();
@@ -469,14 +473,36 @@ export default function AuthenticatedApp({
       .catch(() => pushToast('error', t('aiSaveError')));
   }, [aiSettings?.enabled, pushToast, t]);
 
+  const openAiChat = useCallback(() => {
+    if (!aiSettings?.enabled) {
+      setIsAiSettingsOpen(true);
+      return;
+    }
+
+    setIsAiSettingsOpen(false);
+    setAiChatOpenSignal((value) => value + 1);
+  }, [aiSettings?.enabled]);
+
+  useEffect(() => {
+    const openPalette = (event: KeyboardEvent) => {
+      const primary = event.ctrlKey || event.metaKey;
+      if (primary && event.shiftKey && event.code === 'KeyP') {
+        event.preventDefault();
+        setIsCommandPaletteOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', openPalette);
+    return () => window.removeEventListener('keydown', openPalette);
+  }, []);
+
   const shortcutItems = useShortcutItems(t);
   useAppShortcuts({
     activeModal: Boolean(activeModal),
     createDefaultNote,
     editor,
     formatEditorCode,
-    insertCopyField,
-    insertSecretField,
+    insertDataField,
     isAuthenticated: true,
     isEditorEditing,
     language,
@@ -490,6 +516,132 @@ export default function AuthenticatedApp({
     updateLanguage: onLanguageChange,
     updateTheme: onThemeChange,
   });
+
+  const commandPaletteItems = useMemo<CommandPaletteItem[]>(
+    () => [
+      {
+        id: 'ai-chat',
+        label: t('commandAiChat'),
+        description: t('commandAiChatDesc'),
+        shortcut: 'Ctrl Shift P',
+        icon: <Bot size={15} />,
+        run: openAiChat,
+      },
+      {
+        id: 'ai-settings',
+        label: t('commandAiSettings'),
+        description: t('commandAiSettingsDesc'),
+        icon: <Settings size={15} />,
+        run: () => setIsAiSettingsOpen(true),
+      },
+      {
+        id: 'new-note',
+        label: t('shortcutNewFocused'),
+        description: t('commandNewNoteDesc'),
+        shortcut: 'Ctrl Alt N',
+        icon: <FilePlus2 size={15} />,
+        run: () => createDefaultNote(workspace.selectedId),
+      },
+      {
+        id: 'save-note',
+        label: t('shortcutSave'),
+        description: t('commandSaveNoteDesc'),
+        shortcut: 'Ctrl S',
+        icon: <Save size={15} />,
+        disabled: !workspace.selectedNote || !isEditorEditing,
+        run: () => void saveEditorContent(),
+      },
+      {
+        id: 'focus-search',
+        label: t('shortcutSearch'),
+        description: t('commandSearchDesc'),
+        shortcut: 'Ctrl /',
+        icon: <Search size={15} />,
+        run: () => {
+          workspace.setMobileTreeOpen(true);
+          window.setTimeout(
+            () => document.querySelector<HTMLInputElement>('.search-box input')?.focus(),
+            0,
+          );
+        },
+      },
+      {
+        id: 'templates',
+        label: t('templates'),
+        description: t('commandTemplatesDesc'),
+        shortcut: 'Ctrl P',
+        icon: <Tags size={15} />,
+        run: () => setActiveModal({ type: 'templates' }),
+      },
+      {
+        id: 'trash',
+        label: t('trash'),
+        description: t('commandTrashDesc'),
+        icon: <Trash2 size={15} />,
+        run: () => setActiveModal({ type: 'trash' }),
+      },
+      {
+        id: 'share',
+        label: t('shareLinks'),
+        description: t('commandShareDesc'),
+        icon: <Link2 size={15} />,
+        disabled: !workspace.selectedNote,
+        run: () => setActiveModal({ type: 'share' }),
+      },
+      {
+        id: 'files',
+        label: t('accountFiles'),
+        description: t('commandFilesDesc'),
+        icon: <Files size={15} />,
+        run: () => setActiveModal({ type: 'accountAttachments' }),
+      },
+      {
+        id: 'theme',
+        label: t('shortcutTheme'),
+        description: t('commandThemeDesc'),
+        shortcut: 'Ctrl Alt T',
+        icon: theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />,
+        run: () => onThemeChange(theme === 'dark' ? 'light' : 'dark'),
+      },
+      {
+        id: 'language',
+        label: t('shortcutLanguage'),
+        description: t('commandLanguageDesc'),
+        shortcut: 'Ctrl Alt G',
+        icon: <Languages size={15} />,
+        run: () => onLanguageChange(language === 'ru' ? 'en' : 'ru'),
+      },
+      {
+        id: 'sidebar',
+        label: t('shortcutSidebar'),
+        description: t('commandSidebarDesc'),
+        shortcut: 'Ctrl \\',
+        icon: <PanelLeft size={15} />,
+        run: () => workspace.setMobileTreeOpen((isOpen) => !isOpen),
+      },
+      {
+        id: 'admin',
+        label: t('adminPanel'),
+        description: t('commandAdminDesc'),
+        icon: <ShieldCheck size={15} />,
+        disabled: user.role !== 'admin',
+        run: () => setActiveView('admin'),
+      },
+    ],
+    [
+      createDefaultNote,
+      isEditorEditing,
+      language,
+      onLanguageChange,
+      onThemeChange,
+      openAiChat,
+      saveEditorContent,
+      t,
+      theme,
+      user.role,
+      workspace,
+    ],
+  );
 
   return (
     <main className="app-shell">
@@ -590,8 +742,7 @@ export default function AuthenticatedApp({
               shortcuts={shortcutItems}
               onModeChange={setIsEditorEditing}
               onOpenLink={openLinkModal}
-              onInsertCopyField={insertCopyField}
-              onInsertSecretField={insertSecretField}
+              onInsertDataField={insertDataField}
               onOpenVersions={() => setActiveModal({ type: 'versions' })}
               onOpenTemplates={() => setActiveModal({ type: 'templates' })}
               onOpenShareLinks={() => setActiveModal({ type: 'share' })}
@@ -616,7 +767,9 @@ export default function AuthenticatedApp({
       <AiAssistant
         settings={aiSettings}
         t={t}
+        language={language}
         isSettingsOpen={isAiSettingsOpen}
+        openChatSignal={aiChatOpenSignal}
         onSettingsOpenChange={setIsAiSettingsOpen}
         onSettingsChange={setAiSettings}
         currentNote={
@@ -649,6 +802,13 @@ export default function AuthenticatedApp({
           await workspace.loadNote(noteId);
         }}
         pushToast={pushToast}
+      />
+
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        t={t}
+        commands={commandPaletteItems}
+        onClose={() => setIsCommandPaletteOpen(false)}
       />
 
       <Modal

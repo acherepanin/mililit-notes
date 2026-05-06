@@ -1,8 +1,18 @@
-import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import { ActivityService } from '../activity/activity.service';
 import { DatabaseService } from '../infra/database.service';
 import { AiCryptoService } from './ai-crypto.service';
+import { AiModelCatalogService } from './ai-model-catalog.service';
+import { calculateAiUsageCostUsd } from './ai-pricing';
 import { AiToolsService } from './ai-tools.service';
 import type { ExecuteAiToolDto } from './dto/execute-ai-tool.dto';
 import type { SendAiMessageDto } from './dto/send-ai-message.dto';
@@ -10,85 +20,77 @@ import type { UpdateAiSettingsDto } from './dto/update-ai-settings.dto';
 import type {
   AiChatMessage,
   AiChatResponse,
+  AiMonthlyUsageResponse,
   AiModelResponse,
   AiModelRow,
-  AiModelSignal,
   AiModelTier,
+  AiProviderSettingsRow,
+  AiSavedProviderResponse,
   AiSettingsResponse,
   AiSettingsRow,
+  AiToolAction,
   AiToolExecutionResponse,
+  AiUsageSummary,
   OpenAiCompatibleChatResponse,
   OpenAiCompatibleModelsResponse,
+  OpenAiCompatibleTranscriptionResponse,
 } from './ai.types';
 
 const defaultProviderName = 'OpenAI-compatible';
 const defaultBaseUrl = 'https://api.openai.com/v1';
 const chatTimeoutMs = 45_000;
 const modelsTimeoutMs = 20_000;
-const sortRankMultiplier = 1_000_000_000;
+const transcriptionTimeoutMs = 60_000;
+const modelSyncIntervalMs = 24 * 60 * 60 * 1000;
+const defaultTranscriptionModel = 'whisper-1';
+interface ConfiguredAiUserRow {
+  user_id: number;
+}
 
 interface SyncedProviderModel {
   modelId: string;
   providerCreatedAt: number | null;
 }
 
-const knownModelSignals: Record<
-  string,
-  Partial<
-    Pick<
-      AiModelResponse,
-      | 'tier'
-      | 'quality'
-      | 'speed'
-      | 'cost'
-      | 'score'
-      | 'speedScore'
-      | 'valueScore'
-      | 'sortRank'
-      | 'capabilities'
-    >
-  >
-> = {
-  'gpt-5.2-pro': { score: 99, speedScore: 62, valueScore: 54, sortRank: 5220 },
-  'gpt-5.2': { score: 97, speedScore: 70, valueScore: 62, sortRank: 5200 },
-  'gpt-5.1-codex-max': { score: 96, speedScore: 63, valueScore: 58, sortRank: 5160 },
-  'gpt-5.1-codex-mini': { score: 84, speedScore: 86, valueScore: 78, sortRank: 5155 },
-  'gpt-5.1-codex': { score: 94, speedScore: 68, valueScore: 60, sortRank: 5150 },
-  'gpt-5.1': { score: 94, speedScore: 72, valueScore: 66, sortRank: 5100 },
-  'gpt-5-pro': { score: 96, speedScore: 58, valueScore: 52, sortRank: 5020 },
-  'gpt-5-mini': { score: 82, speedScore: 88, valueScore: 82, sortRank: 5010 },
-  'gpt-5-nano': { score: 68, speedScore: 98, valueScore: 88, sortRank: 5005 },
-  'gpt-5': { score: 91, speedScore: 74, valueScore: 68, sortRank: 5000 },
-  'gpt-4.5': { score: 88, speedScore: 55, valueScore: 46, sortRank: 4500 },
-  'gpt-4.1-nano': { score: 56, speedScore: 97, valueScore: 88, sortRank: 4105 },
-  'gpt-4.1-mini': { score: 72, speedScore: 91, valueScore: 84, sortRank: 4110 },
-  'gpt-4.1': { score: 83, speedScore: 76, valueScore: 72, sortRank: 4100 },
-  'gpt-4o-mini': { score: 66, speedScore: 92, valueScore: 86, sortRank: 4060 },
-  'gpt-4o': { score: 78, speedScore: 82, valueScore: 74, sortRank: 4050 },
-  'gpt-4-turbo': { score: 70, speedScore: 64, valueScore: 48, sortRank: 4010 },
-  'gpt-4': { score: 64, speedScore: 48, valueScore: 36, sortRank: 4000 },
-  'gpt-3.5-turbo': { score: 40, speedScore: 86, valueScore: 70, sortRank: 3500 },
-  'o4-mini': { score: 74, speedScore: 84, valueScore: 82, sortRank: 4040 },
-  'o3-pro': { score: 89, speedScore: 44, valueScore: 38, sortRank: 3035 },
-  'o3-mini': { score: 58, speedScore: 82, valueScore: 74, sortRank: 3031 },
-  o3: { score: 82, speedScore: 58, valueScore: 54, sortRank: 3030 },
-  'o1-pro': { score: 78, speedScore: 38, valueScore: 32, sortRank: 1015 },
-  'o1-mini': { score: 48, speedScore: 78, valueScore: 68, sortRank: 1011 },
-  o1: { score: 70, speedScore: 48, valueScore: 42, sortRank: 1010 },
-  'gpt-oss-120b': { tier: 'free', score: 76, speedScore: 70, valueScore: 90, sortRank: 1200 },
-  'gpt-oss-20b': { tier: 'free', score: 52, speedScore: 88, valueScore: 92, sortRank: 200 },
-};
+interface AiChatOptions {
+  allowReadSecretsOverride?: boolean;
+  allowedToolNames?: ReadonlySet<string>;
+  requireActionConfirmationOverride?: boolean;
+}
+
+interface AiAudioTranscriptionInput {
+  content: Buffer;
+  fileName: string;
+  mimeType: string;
+}
 
 @Injectable()
-export class AiService {
+export class AiService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AiService.name);
+  private modelSyncInterval: NodeJS.Timeout | null = null;
 
   constructor(
     @Inject(DatabaseService) private readonly databaseService: DatabaseService,
     @Inject(AiCryptoService) private readonly aiCryptoService: AiCryptoService,
     @Inject(ActivityService) private readonly activityService: ActivityService,
+    @Inject(AiModelCatalogService) private readonly aiModelCatalogService: AiModelCatalogService,
     @Inject(AiToolsService) private readonly aiToolsService: AiToolsService,
+    @Inject(ConfigService) private readonly configService: ConfigService,
   ) {}
+
+  onModuleInit(): void {
+    this.modelSyncInterval = setInterval(() => {
+      void this.syncModelsForConfiguredUsers();
+    }, modelSyncIntervalMs);
+    this.modelSyncInterval.unref?.();
+  }
+
+  onModuleDestroy(): void {
+    if (this.modelSyncInterval) {
+      clearInterval(this.modelSyncInterval);
+      this.modelSyncInterval = null;
+    }
+  }
 
   getSettings(userId: number): AiSettingsResponse {
     const settings = this.ensureSettings(userId);
@@ -102,26 +104,35 @@ export class AiService {
     const nextBaseUrl = dto.baseUrl
       ? this.normalizeBaseUrl(dto.baseUrl)
       : this.normalizeBaseUrl(current.base_url);
+    const providerSettings = this.ensureProviderSettings(userId, nextProvider, nextBaseUrl);
     const nextModel =
-      dto.model === null ? null : this.normalizeNullableText(dto.model, current.model);
+      dto.model === null ? null : this.normalizeNullableText(dto.model, providerSettings.model);
     const updates: Record<string, unknown> = {
       userId,
       enabled: dto.enabled === undefined ? current.enabled : dto.enabled ? 1 : 0,
+      allowReadSecrets:
+        dto.allowReadSecrets === undefined
+          ? current.allow_read_secrets
+          : dto.allowReadSecrets
+            ? 1
+            : 0,
+      requireActionConfirmation:
+        dto.requireActionConfirmation === undefined
+          ? current.require_action_confirmation
+          : dto.requireActionConfirmation
+            ? 1
+            : 0,
+      dailyRequestLimit: this.normalizeLimit(dto.dailyRequestLimit, current.daily_request_limit),
+      dailyTokenLimit: this.normalizeLimit(dto.dailyTokenLimit, current.daily_token_limit),
       providerName: nextProvider,
       baseUrl: nextBaseUrl,
       model: nextModel,
       now,
     };
-    const assignments = [
-      'enabled = @enabled',
-      'provider_name = @providerName',
-      'base_url = @baseUrl',
-      'model = @model',
-      'updated_at = @now',
-    ];
+    const providerAssignments = ['model = @model', 'updated_at = @now'];
 
     if (dto.clearApiKey) {
-      assignments.push(
+      providerAssignments.push(
         'api_key_encrypted = NULL',
         'api_key_hint = NULL',
         'api_key_updated_at = NULL',
@@ -129,16 +140,45 @@ export class AiService {
     } else if (dto.apiKey?.trim()) {
       updates.apiKeyEncrypted = this.aiCryptoService.encrypt(dto.apiKey.trim());
       updates.apiKeyHint = this.aiCryptoService.createHint(dto.apiKey.trim());
-      assignments.push(
+      providerAssignments.push(
         'api_key_encrypted = @apiKeyEncrypted',
         'api_key_hint = @apiKeyHint',
         'api_key_updated_at = @now',
       );
     }
 
-    this.databaseService.connection
-      .prepare(`UPDATE ai_user_settings SET ${assignments.join(', ')} WHERE user_id = @userId`)
-      .run(updates);
+    const transaction = this.databaseService.connection.transaction(() => {
+      this.databaseService.connection
+        .prepare(
+          `
+            UPDATE ai_user_settings
+            SET enabled = @enabled,
+                allow_read_secrets = @allowReadSecrets,
+                require_action_confirmation = @requireActionConfirmation,
+                daily_request_limit = @dailyRequestLimit,
+                daily_token_limit = @dailyTokenLimit,
+                provider_name = @providerName,
+                base_url = @baseUrl,
+                updated_at = @now
+            WHERE user_id = @userId
+          `,
+        )
+        .run(updates);
+
+      this.databaseService.connection
+        .prepare(
+          `
+            UPDATE ai_provider_settings
+            SET ${providerAssignments.join(', ')}
+            WHERE user_id = @userId
+              AND provider_name = @providerName
+              AND base_url = @baseUrl
+          `,
+        )
+        .run(updates);
+    });
+
+    transaction();
 
     this.activityService.record({
       actorId: userId,
@@ -146,7 +186,13 @@ export class AiService {
       action: 'ai.settings.update',
       targetType: 'ai_settings',
       targetId: userId,
-      details: { enabled: Boolean(updates.enabled), providerName: nextProvider, model: nextModel },
+      details: {
+        enabled: Boolean(updates.enabled),
+        allowReadSecrets: Boolean(updates.allowReadSecrets),
+        requireActionConfirmation: Boolean(updates.requireActionConfirmation),
+        providerName: nextProvider,
+        model: nextModel,
+      },
     });
 
     return this.getSettings(userId);
@@ -174,17 +220,26 @@ export class AiService {
           typeof model.id === 'string' && model.id.trim()
             ? {
                 modelId: model.id.trim(),
-                providerCreatedAt: this.normalizeProviderCreatedAt(model.created),
+                providerCreatedAt: this.aiModelCatalogService.normalizeProviderCreatedAt(
+                  model.created,
+                ),
               }
             : null,
         )
         .filter((model): model is SyncedProviderModel => Boolean(model));
 
       this.upsertModels(userId, settings.provider_name, models, now);
-      this.updateSyncState(userId, 'ok', null, now);
+      this.updateSyncState(userId, settings.provider_name, settings.base_url, 'ok', null, now);
     } catch (caught) {
       const message = (caught as Error).message || 'Failed to sync models';
-      this.updateSyncState(userId, 'error', message, now);
+      this.updateSyncState(
+        userId,
+        settings.provider_name,
+        settings.base_url,
+        'error',
+        message,
+        now,
+      );
       this.logger.warn(`AI models sync failed for user ${userId}: ${message}`);
       throw new BadRequestException(message);
     }
@@ -194,23 +249,145 @@ export class AiService {
 
   async testConnection(userId: number): Promise<{ ok: boolean; checkedAt: string }> {
     await this.syncModels(userId);
+    const settings = this.ensureSettings(userId);
     const checkedAt = new Date().toISOString();
     this.databaseService.connection
       .prepare(
         `
-          UPDATE ai_user_settings
+          UPDATE ai_provider_settings
           SET last_connection_check_at = @checkedAt,
               last_connection_check_status = 'ok',
               updated_at = @checkedAt
           WHERE user_id = @userId
+            AND provider_name = @providerName
+            AND base_url = @baseUrl
         `,
       )
-      .run({ userId, checkedAt });
+      .run({
+        userId,
+        providerName: settings.provider_name,
+        baseUrl: settings.base_url,
+        checkedAt,
+      });
 
     return { ok: true, checkedAt };
   }
 
-  async chat(userId: number, dto: SendAiMessageDto): Promise<AiChatResponse> {
+  getMonthlyUsage(userId: number): AiMonthlyUsageResponse {
+    const { monthStart, monthEnd } = this.getCurrentMonthRange();
+    const rows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT
+            ai_usage_logs.provider_name as providerName,
+            ai_usage_logs.model,
+            COUNT(*) as requests,
+            COALESCE(SUM(input_tokens), 0) as inputTokens,
+            COALESCE(SUM(output_tokens), 0) as outputTokens,
+            MAX(ai_provider_models.input_price_per_1m) as inputPricePer1M,
+            MAX(ai_provider_models.cached_input_price_per_1m) as cachedInputPricePer1M,
+            MAX(ai_provider_models.output_price_per_1m) as outputPricePer1M
+          FROM ai_usage_logs
+          LEFT JOIN ai_provider_models
+            ON ai_provider_models.user_id = ai_usage_logs.user_id
+           AND ai_provider_models.provider_name = ai_usage_logs.provider_name
+           AND ai_provider_models.model_id = ai_usage_logs.model
+          WHERE ai_usage_logs.user_id = @userId
+            AND ai_usage_logs.created_at >= @monthStart
+            AND ai_usage_logs.created_at < @monthEnd
+          GROUP BY ai_usage_logs.provider_name, ai_usage_logs.model
+          ORDER BY requests DESC, lower(ai_usage_logs.model) ASC
+        `,
+      )
+      .all({ userId, monthStart, monthEnd }) as Array<{
+      providerName: string;
+      model: string;
+      requests: number;
+      inputTokens: number;
+      outputTokens: number;
+      inputPricePer1M: number | null;
+      cachedInputPricePer1M: number | null;
+      outputPricePer1M: number | null;
+    }>;
+    let knownCostUsd = 0;
+    let hasUnknownCost = false;
+    let requests = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    const models = rows.map((row) => {
+      const fallbackPricing = this.aiModelCatalogService.getPricing(row.model);
+      const pricing = {
+        inputPricePer1M: row.inputPricePer1M ?? fallbackPricing.inputPricePer1M,
+        cachedInputPricePer1M: row.cachedInputPricePer1M ?? fallbackPricing.cachedInputPricePer1M,
+        outputPricePer1M: row.outputPricePer1M ?? fallbackPricing.outputPricePer1M,
+      };
+      const costUsd = calculateAiUsageCostUsd(row.inputTokens, row.outputTokens, pricing);
+
+      requests += row.requests;
+      inputTokens += row.inputTokens;
+      outputTokens += row.outputTokens;
+
+      if (costUsd === null) {
+        hasUnknownCost = true;
+      } else {
+        knownCostUsd += costUsd;
+      }
+
+      return {
+        ...row,
+        tokens: row.inputTokens + row.outputTokens,
+        costUsd,
+        ...pricing,
+      };
+    });
+
+    return {
+      monthStart,
+      monthEnd,
+      requests,
+      inputTokens,
+      outputTokens,
+      tokens: inputTokens + outputTokens,
+      knownCostUsd,
+      hasUnknownCost,
+      models,
+    };
+  }
+
+  private async syncModelsForConfiguredUsers(): Promise<void> {
+    const rows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT user_settings.user_id
+          FROM ai_user_settings user_settings
+          JOIN ai_provider_settings provider_settings
+            ON provider_settings.user_id = user_settings.user_id
+           AND provider_settings.provider_name = user_settings.provider_name
+           AND provider_settings.base_url = user_settings.base_url
+          WHERE user_settings.enabled = 1
+            AND provider_settings.api_key_encrypted IS NOT NULL
+            AND trim(provider_settings.api_key_encrypted) != ''
+          ORDER BY user_settings.user_id ASC
+        `,
+      )
+      .all() as ConfiguredAiUserRow[];
+
+    for (const row of rows) {
+      try {
+        await this.syncModels(row.user_id);
+      } catch (caught) {
+        this.logger.warn(
+          `Scheduled AI models sync failed for user ${row.user_id}: ${(caught as Error).message}`,
+        );
+      }
+    }
+  }
+
+  async chat(
+    userId: number,
+    dto: SendAiMessageDto,
+    options: AiChatOptions = {},
+  ): Promise<AiChatResponse> {
     const settings = this.ensureSettings(userId);
 
     if (!settings.enabled) {
@@ -219,12 +396,22 @@ export class AiService {
 
     const apiKey = this.getApiKey(settings);
     const model = settings.model?.trim();
+    const allowReadSecrets =
+      options.allowReadSecretsOverride ?? Boolean(settings.allow_read_secrets);
 
     if (!model) {
       throw new BadRequestException('AI model is not selected');
     }
 
     if (this.isBareConfirmation(dto.message)) {
+      this.enforceUsageLimits(userId, settings, this.estimateTokens(dto.message));
+      this.recordAiUsage(
+        userId,
+        settings.provider_name,
+        model,
+        this.estimateTokens(dto.message),
+        0,
+      );
       this.recordChatActivity(userId, model, dto.message.length);
       return {
         message: {
@@ -236,19 +423,27 @@ export class AiService {
     }
 
     const currentNote = this.normalizeCurrentNote(dto.currentNote);
+    const safeCurrentNote = this.prepareCurrentNoteForModel(currentNote, allowReadSecrets);
     const messages: AiChatMessage[] = [
       {
         role: 'developer',
         content: [
           'You are an assistant inside a private notes app. Answer briefly and clearly.',
           'Do not claim that you changed notes unless a tool result says so.',
-          this.aiToolsService.getToolInstructions(),
-          this.buildCurrentNotePrompt(currentNote),
+          this.aiToolsService.getToolInstructions({
+            allowReadSecrets,
+            requireActionConfirmation: Boolean(settings.require_action_confirmation),
+            allowedToolNames: options.allowedToolNames,
+          }),
+          this.buildCurrentNotePrompt(safeCurrentNote, allowReadSecrets),
         ].join(' '),
       },
       ...this.normalizeHistory(dto.history),
       { role: 'user', content: dto.message.trim() },
     ];
+    const estimatedInputTokens = this.estimateMessagesTokens(messages);
+    this.enforceUsageLimits(userId, settings, estimatedInputTokens);
+    const tools = this.aiToolsService.getOpenAiTools(options.allowedToolNames);
     const response = await fetch(this.buildProviderUrl(settings.base_url, 'chat/completions'), {
       method: 'POST',
       headers: {
@@ -258,8 +453,7 @@ export class AiService {
       body: JSON.stringify({
         model,
         messages,
-        tools: this.aiToolsService.getOpenAiTools(),
-        tool_choice: 'auto',
+        ...(tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
       }),
       signal: AbortSignal.timeout(chatTimeoutMs),
     });
@@ -274,15 +468,70 @@ export class AiService {
     }
 
     const payload = (await response.json()) as OpenAiCompatibleChatResponse;
+    const inputTokens = this.readTokenUsage(payload.usage?.prompt_tokens) ?? estimatedInputTokens;
+    const outputTokens = this.readTokenUsage(payload.usage?.completion_tokens) ?? 0;
     const toolCalls = this.aiToolsService.parseToolCalls(payload.choices?.[0]?.message?.tool_calls);
+    const toolCallUsages = toolCalls.map((toolCall) => ({
+      name: toolCall.name,
+      mode: this.safeGetToolMode(toolCall.name),
+    }));
 
     if (toolCalls.length > 0) {
-      const results = toolCalls.map((toolCall) =>
-        this.aiToolsService.handleToolCall(userId, toolCall),
+      const results = await Promise.all(
+        toolCalls.map(async (toolCall) =>
+          this.aiToolsService
+            .handleToolCall(userId, toolCall, {
+              allowReadSecrets,
+              allowedToolNames: options.allowedToolNames,
+            })
+            .catch((caught: unknown) => ({
+              message: {
+                role: 'assistant' as const,
+                content: this.formatToolCallError(toolCall.name, caught),
+              },
+            })),
+        ),
       );
-      const actions = results.flatMap((result) => (result.action ? [result.action] : []));
+      const actions = results.flatMap((result) =>
+        'action' in result && result.action ? [result.action] : [],
+      );
+      const shouldConfirmActions =
+        options.requireActionConfirmationOverride ?? Boolean(settings.require_action_confirmation);
 
+      this.recordAiUsage(userId, settings.provider_name, model, inputTokens, outputTokens);
       this.recordChatActivity(userId, model, dto.message.length);
+
+      if (!shouldConfirmActions && actions.length > 0) {
+        const executions: AiToolExecutionResponse[] = [];
+        const readonlyMessages = results
+          .filter((result) => !('action' in result && result.action))
+          .map((result) => result.message.content);
+        const executionMessages: string[] = [];
+
+        for (const action of actions) {
+          try {
+            const execution = this.aiToolsService.executeAction(
+              userId,
+              action.name,
+              action.payload,
+              options.allowedToolNames,
+            );
+            executions.push(execution);
+            executionMessages.push(execution.message.content);
+          } catch (caught) {
+            executionMessages.push(this.formatToolExecutionError(action, caught));
+          }
+        }
+
+        return {
+          message: {
+            role: 'assistant',
+            content: [...readonlyMessages, ...executionMessages].join('\n\n'),
+          },
+          executions: executions.length > 0 ? executions : undefined,
+          toolCalls: toolCallUsages,
+        };
+      }
 
       return {
         message: {
@@ -290,6 +539,7 @@ export class AiService {
           content: results.map((result) => result.message.content).join('\n\n'),
         },
         actions: actions.length > 0 ? actions : undefined,
+        toolCalls: toolCallUsages,
       };
     }
 
@@ -299,13 +549,77 @@ export class AiService {
       throw new BadRequestException('AI provider returned an empty response');
     }
 
+    this.recordAiUsage(
+      userId,
+      settings.provider_name,
+      model,
+      inputTokens,
+      this.readTokenUsage(payload.usage?.completion_tokens) ?? this.estimateTokens(content),
+    );
     this.recordChatActivity(userId, model, dto.message.length);
 
     return { message: { role: 'assistant', content: content.trim() } };
   }
 
-  executeAction(userId: number, dto: ExecuteAiToolDto): AiToolExecutionResponse {
-    return this.aiToolsService.executeAction(userId, dto.name, dto.payload);
+  async transcribeAudio(userId: number, audio: AiAudioTranscriptionInput): Promise<string> {
+    const settings = this.ensureSettings(userId);
+
+    if (!settings.enabled) {
+      throw new BadRequestException('AI assistant is disabled');
+    }
+
+    const apiKey = this.getApiKey(settings);
+    const model =
+      this.configService.get<string>('AI_TRANSCRIPTION_MODEL')?.trim() || defaultTranscriptionModel;
+    const formData = new FormData();
+    const audioBytes = new Uint8Array(audio.content);
+
+    formData.append('model', model);
+    formData.append('file', new Blob([audioBytes], { type: audio.mimeType }), audio.fileName);
+    this.enforceUsageLimits(userId, settings, 0);
+
+    const response = await fetch(this.buildProviderUrl(settings.base_url, 'audio/transcriptions'), {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: formData,
+      signal: AbortSignal.timeout(transcriptionTimeoutMs),
+    });
+
+    if (!response.ok) {
+      const providerMessage = await this.readProviderError(response);
+      throw new BadRequestException(
+        providerMessage
+          ? `AI transcription returned ${response.status}: ${providerMessage}`
+          : `AI transcription returned ${response.status}`,
+      );
+    }
+
+    const payload = (await response.json()) as OpenAiCompatibleTranscriptionResponse;
+    const text = typeof payload.text === 'string' ? payload.text.trim() : '';
+
+    if (!text) {
+      throw new BadRequestException('AI transcription returned empty text');
+    }
+
+    const inputTokens = this.readTokenUsage(payload.usage?.input_tokens) ?? 0;
+    const outputTokens =
+      this.readTokenUsage(payload.usage?.output_tokens) ?? this.estimateTokens(text);
+    this.recordAiUsage(userId, settings.provider_name, model, inputTokens, outputTokens);
+
+    return text;
+  }
+
+  executeAction(
+    userId: number,
+    dto: ExecuteAiToolDto,
+    options: Pick<AiChatOptions, 'allowedToolNames'> = {},
+  ): AiToolExecutionResponse {
+    return this.aiToolsService.executeAction(
+      userId,
+      dto.name,
+      dto.payload,
+      options.allowedToolNames,
+    );
   }
 
   private recordChatActivity(userId: number, model: string, messageLength: number): void {
@@ -319,10 +633,90 @@ export class AiService {
     });
   }
 
+  private recordAiUsage(
+    userId: number,
+    providerName: string,
+    model: string,
+    inputTokens: number,
+    outputTokens: number,
+  ): void {
+    this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO ai_usage_logs
+            (user_id, provider_name, model, input_tokens, output_tokens, created_at)
+          VALUES (@userId, @providerName, @model, @inputTokens, @outputTokens, @createdAt)
+        `,
+      )
+      .run({
+        userId,
+        providerName,
+        model,
+        inputTokens: Math.max(0, Math.trunc(inputTokens)),
+        outputTokens: Math.max(0, Math.trunc(outputTokens)),
+        createdAt: new Date().toISOString(),
+      });
+  }
+
+  private enforceUsageLimits(
+    userId: number,
+    settings: AiSettingsRow,
+    nextInputTokens: number,
+  ): void {
+    const usage = this.getUsageToday(userId);
+
+    if (settings.daily_request_limit !== null && usage.requests >= settings.daily_request_limit) {
+      throw new BadRequestException('Daily AI request limit is reached');
+    }
+
+    if (
+      settings.daily_token_limit !== null &&
+      usage.tokens + nextInputTokens > settings.daily_token_limit
+    ) {
+      throw new BadRequestException('Daily AI token limit is reached');
+    }
+  }
+
+  private getUsageToday(userId: number): AiUsageSummary {
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const row = this.databaseService.connection
+      .prepare(
+        `
+          SELECT
+            COUNT(*) as requests,
+            COALESCE(SUM(input_tokens), 0) as inputTokens,
+            COALESCE(SUM(output_tokens), 0) as outputTokens
+          FROM ai_usage_logs
+          WHERE user_id = @userId AND created_at >= @dayStart
+        `,
+      )
+      .get({ userId, dayStart: dayStart.toISOString() }) as
+      | { requests: number; inputTokens: number; outputTokens: number }
+      | undefined;
+    const inputTokens = row?.inputTokens ?? 0;
+    const outputTokens = row?.outputTokens ?? 0;
+
+    return {
+      requests: row?.requests ?? 0,
+      inputTokens,
+      outputTokens,
+      tokens: inputTokens + outputTokens,
+    };
+  }
+
+  private getCurrentMonthRange(): { monthStart: string; monthEnd: string } {
+    const start = new Date();
+    start.setUTCDate(1);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+
+    return { monthStart: start.toISOString(), monthEnd: end.toISOString() };
+  }
+
   private ensureSettings(userId: number): AiSettingsRow {
-    const existing = this.databaseService.connection
-      .prepare('SELECT * FROM ai_user_settings WHERE user_id = ?')
-      .get(userId) as AiSettingsRow | undefined;
+    const existing = this.getActiveSettings(userId);
 
     if (existing) {
       return existing;
@@ -333,15 +727,106 @@ export class AiService {
       .prepare(
         `
           INSERT INTO ai_user_settings
-            (user_id, enabled, provider_name, base_url, created_at, updated_at)
-          VALUES (@userId, 0, @providerName, @baseUrl, @now, @now)
+            (user_id, enabled, allow_read_secrets, require_action_confirmation, provider_name, base_url, created_at, updated_at)
+          VALUES (@userId, 0, 0, 1, @providerName, @baseUrl, @now, @now)
         `,
       )
       .run({ userId, providerName: defaultProviderName, baseUrl: defaultBaseUrl, now });
 
+    this.ensureProviderSettings(userId, defaultProviderName, defaultBaseUrl);
+
+    return this.getActiveSettings(userId) as AiSettingsRow;
+  }
+
+  private getActiveSettings(userId: number): AiSettingsRow | undefined {
+    const active = this.databaseService.connection
+      .prepare(
+        `
+          SELECT
+            user_settings.user_id,
+            user_settings.enabled,
+            user_settings.allow_read_secrets,
+            user_settings.require_action_confirmation,
+            user_settings.daily_request_limit,
+            user_settings.daily_token_limit,
+            user_settings.provider_name,
+            user_settings.base_url,
+            provider_settings.model,
+            provider_settings.api_key_encrypted,
+            provider_settings.api_key_hint,
+            provider_settings.api_key_updated_at,
+            provider_settings.last_connection_check_at,
+            provider_settings.last_connection_check_status,
+            provider_settings.last_models_sync_at,
+            provider_settings.models_sync_status,
+            provider_settings.models_sync_error,
+            user_settings.created_at,
+            user_settings.updated_at
+          FROM ai_user_settings user_settings
+          LEFT JOIN ai_provider_settings provider_settings
+            ON provider_settings.user_id = user_settings.user_id
+           AND provider_settings.provider_name = user_settings.provider_name
+           AND provider_settings.base_url = user_settings.base_url
+          WHERE user_settings.user_id = ?
+        `,
+      )
+      .get(userId) as AiSettingsRow | undefined;
+
+    if (!active) {
+      return undefined;
+    }
+
+    if (active.model === undefined) {
+      this.ensureProviderSettings(userId, active.provider_name, active.base_url);
+      return this.getActiveSettings(userId);
+    }
+
+    return active;
+  }
+
+  private ensureProviderSettings(
+    userId: number,
+    providerName: string,
+    baseUrl: string,
+  ): AiProviderSettingsRow {
+    const existing = this.databaseService.connection
+      .prepare(
+        `
+          SELECT *
+          FROM ai_provider_settings
+          WHERE user_id = @userId
+            AND provider_name = @providerName
+            AND base_url = @baseUrl
+        `,
+      )
+      .get({ userId, providerName, baseUrl }) as AiProviderSettingsRow | undefined;
+
+    if (existing) {
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO ai_provider_settings
+            (user_id, provider_name, base_url, created_at, updated_at)
+          VALUES (@userId, @providerName, @baseUrl, @now, @now)
+        `,
+      )
+      .run({ userId, providerName, baseUrl, now });
+
     return this.databaseService.connection
-      .prepare('SELECT * FROM ai_user_settings WHERE user_id = ?')
-      .get(userId) as AiSettingsRow;
+      .prepare(
+        `
+          SELECT *
+          FROM ai_provider_settings
+          WHERE user_id = @userId
+            AND provider_name = @providerName
+            AND base_url = @baseUrl
+        `,
+      )
+      .get({ userId, providerName, baseUrl }) as AiProviderSettingsRow;
   }
 
   private listModels(userId: number, providerName: string): AiModelResponse[] {
@@ -350,23 +835,31 @@ export class AiService {
         `
           SELECT * FROM ai_provider_models
           WHERE user_id = @userId AND provider_name = @providerName
-          ORDER BY is_deprecated ASC,
-                   CASE tier WHEN 'paid' THEN 0 WHEN 'free' THEN 1 ELSE 2 END,
-                   lower(label) ASC
         `,
       )
       .all({ userId, providerName }) as AiModelRow[];
 
     return rows
       .map((row) => {
-        const classification = this.classifyModel(row.model_id);
-        const providerCreatedAt = this.normalizeProviderCreatedAt(row.provider_created_at);
+        const classification = this.aiModelCatalogService.classifyModel(row.model_id);
+        const providerCreatedAt = this.aiModelCatalogService.normalizeProviderCreatedAt(
+          row.provider_created_at,
+        );
+        const fallbackPricing = this.aiModelCatalogService.getPricing(row.model_id);
 
         return {
           id: row.model_id,
           label: row.label,
           ...classification,
-          sortRank: this.createSortRank(row.model_id, classification.sortRank, providerCreatedAt),
+          inputPricePer1M: row.input_price_per_1m ?? fallbackPricing.inputPricePer1M,
+          cachedInputPricePer1M:
+            row.cached_input_price_per_1m ?? fallbackPricing.cachedInputPricePer1M,
+          outputPricePer1M: row.output_price_per_1m ?? fallbackPricing.outputPricePer1M,
+          sortRank: this.aiModelCatalogService.createSortRank(
+            row.model_id,
+            classification.sortRank,
+            providerCreatedAt,
+          ),
           capabilities: this.parseCapabilities(row.capabilities),
           isDeprecated: Boolean(row.is_deprecated),
         };
@@ -411,10 +904,12 @@ export class AiService {
         `
           INSERT INTO ai_provider_models
             (user_id, provider_name, model_id, label, tier, quality, speed, cost, capabilities,
+             input_price_per_1m, cached_input_price_per_1m, output_price_per_1m,
              provider_created_at, is_deprecated, last_seen_at, created_at, updated_at)
           VALUES
             (@userId, @providerName, @modelId, @label, @tier, @quality, @speed, @cost,
-             @capabilities, @providerCreatedAt, 0, @now, @now, @now)
+             @capabilities, @inputPricePer1M, @cachedInputPricePer1M, @outputPricePer1M,
+             @providerCreatedAt, 0, @now, @now, @now)
           ON CONFLICT(user_id, provider_name, model_id) DO UPDATE SET
             label = excluded.label,
             tier = excluded.tier,
@@ -422,6 +917,9 @@ export class AiService {
             speed = excluded.speed,
             cost = excluded.cost,
             capabilities = excluded.capabilities,
+            input_price_per_1m = excluded.input_price_per_1m,
+            cached_input_price_per_1m = excluded.cached_input_price_per_1m,
+            output_price_per_1m = excluded.output_price_per_1m,
             provider_created_at = COALESCE(excluded.provider_created_at, ai_provider_models.provider_created_at),
             is_deprecated = 0,
             last_seen_at = excluded.last_seen_at,
@@ -430,12 +928,16 @@ export class AiService {
       );
 
       for (const model of uniqueModels) {
+        const pricing = this.aiModelCatalogService.getPricing(model.modelId);
         statement.run({
           userId,
           providerName,
           modelId: model.modelId,
           label: model.modelId,
-          ...this.classifyModel(model.modelId),
+          ...this.aiModelCatalogService.classifyModel(model.modelId),
+          inputPricePer1M: pricing.inputPricePer1M,
+          cachedInputPricePer1M: pricing.cachedInputPricePer1M,
+          outputPricePer1M: pricing.outputPricePer1M,
           capabilities: JSON.stringify(['chat']),
           providerCreatedAt: model.providerCreatedAt,
           now,
@@ -448,6 +950,8 @@ export class AiService {
 
   private updateSyncState(
     userId: number,
+    providerName: string,
+    baseUrl: string,
     status: 'ok' | 'error',
     error: string | null,
     syncedAt: string,
@@ -455,20 +959,27 @@ export class AiService {
     this.databaseService.connection
       .prepare(
         `
-          UPDATE ai_user_settings
+          UPDATE ai_provider_settings
           SET last_models_sync_at = @syncedAt,
               models_sync_status = @status,
               models_sync_error = @error,
               updated_at = @syncedAt
           WHERE user_id = @userId
+            AND provider_name = @providerName
+            AND base_url = @baseUrl
         `,
       )
-      .run({ userId, status, error, syncedAt });
+      .run({ userId, providerName, baseUrl, status, error, syncedAt });
   }
 
   private mapSettings(settings: AiSettingsRow, models: AiModelResponse[]): AiSettingsResponse {
     return {
       enabled: Boolean(settings.enabled),
+      allowReadSecrets: Boolean(settings.allow_read_secrets),
+      requireActionConfirmation: Boolean(settings.require_action_confirmation),
+      dailyRequestLimit: settings.daily_request_limit,
+      dailyTokenLimit: settings.daily_token_limit,
+      usageToday: this.getUsageToday(settings.user_id),
       providerName: settings.provider_name,
       baseUrl: settings.base_url,
       model: settings.model,
@@ -481,7 +992,31 @@ export class AiService {
       modelsSyncStatus: settings.models_sync_status,
       modelsSyncError: settings.models_sync_error,
       models,
+      providers: this.listSavedProviders(settings.user_id),
     };
+  }
+
+  private listSavedProviders(userId: number): AiSavedProviderResponse[] {
+    const rows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT *
+          FROM ai_provider_settings
+          WHERE user_id = @userId
+          ORDER BY updated_at DESC, id DESC
+        `,
+      )
+      .all({ userId }) as AiProviderSettingsRow[];
+
+    return rows.map((row) => ({
+      providerName: row.provider_name,
+      baseUrl: row.base_url,
+      model: row.model,
+      hasApiKey: Boolean(row.api_key_encrypted),
+      apiKeyHint: row.api_key_hint,
+      apiKeyUpdatedAt: row.api_key_updated_at,
+      updatedAt: row.updated_at,
+    }));
   }
 
   private normalizeHistory(history?: SendAiMessageDto['history']): AiChatMessage[] {
@@ -516,8 +1051,24 @@ export class AiService {
     };
   }
 
+  private prepareCurrentNoteForModel(
+    currentNote: { id: number; name: string; contentHtml: string; contentText: string } | null,
+    allowReadSecrets: boolean,
+  ): { id: number; name: string; contentHtml: string; contentText: string } | null {
+    if (!currentNote || allowReadSecrets) {
+      return currentNote;
+    }
+
+    return {
+      ...currentNote,
+      contentHtml: this.redactSecretHtml(currentNote.contentHtml),
+      contentText: this.redactSecretText(currentNote.contentText),
+    };
+  }
+
   private buildCurrentNotePrompt(
     currentNote: { id: number; name: string; contentHtml: string; contentText: string } | null,
+    allowReadSecrets: boolean,
   ): string {
     if (!currentNote) {
       return [
@@ -529,9 +1080,13 @@ export class AiService {
 
     return [
       'CURRENT NOTE CONTEXT:',
+      `noteId=${currentNote.id}`,
       `id=${currentNote.id}`,
       `name="${this.escapePromptText(currentNote.name, 180)}"`,
-      'Use this noteId when the user says current, selected, opened, this, already created note.',
+      'For all note tools use noteId exactly as shown above when the user says current, selected, opened, this, already created note.',
+      allowReadSecrets
+        ? 'Secret values are included because the user enabled AI secret access.'
+        : 'Secret/password/token values are redacted because AI secret access is disabled.',
       'Plain text snapshot for reading/searching inside the current note:',
       `<contentText>${this.escapePromptText(currentNote.contentText, 6000)}</contentText>`,
       'HTML snapshot for preserving editor formatting during updates:',
@@ -545,6 +1100,38 @@ export class AiService {
       .replaceAll('&', '&amp;')
       .replaceAll('<', '&lt;')
       .replaceAll('>', '&gt;');
+  }
+
+  private formatToolExecutionError(action: AiToolAction, caught: unknown): string {
+    const message = caught instanceof Error && caught.message ? caught.message : 'unknown error';
+    return `Не удалось выполнить "${action.title}": ${message}.`;
+  }
+
+  private formatToolCallError(name: string, caught: unknown): string {
+    const message = caught instanceof Error && caught.message ? caught.message : 'unknown error';
+    return `Не удалось подготовить действие "${name}": ${message}.`;
+  }
+
+  private safeGetToolMode(name: string): 'readonly' | 'mutation' {
+    try {
+      return this.aiToolsService.getToolMode(name);
+    } catch {
+      return 'readonly';
+    }
+  }
+
+  private redactSecretHtml(value: string): string {
+    return value.replace(
+      /(<[^>]*data-copy-field[^>]*(?:data-secret="true"|data-kind="(?:password|token|credential)")|<[^>]*(?:data-secret="true"|data-kind="(?:password|token|credential)")[^>]*data-copy-field[^>]*)([^>]*data-value=")[^"]*("[^>]*>)/gi,
+      '$1$2[secret hidden]$3',
+    );
+  }
+
+  private redactSecretText(value: string): string {
+    return value.replace(
+      /\b(password|пароль|token|токен|api[-_\s]?key|secret|секрет)\b\s*[:=-]\s*[^\n,;]+/gi,
+      (match, label: string) => `${label}: [secret hidden]`,
+    );
   }
 
   private isBareConfirmation(message: string): boolean {
@@ -576,6 +1163,32 @@ export class AiService {
 
     const trimmed = value?.trim();
     return trimmed || null;
+  }
+
+  private normalizeLimit(value: number | null | undefined, fallback: number | null): number | null {
+    if (value === undefined) {
+      return fallback;
+    }
+
+    if (value === null) {
+      return null;
+    }
+
+    return Number.isInteger(value) && value > 0 ? value : fallback;
+  }
+
+  private estimateMessagesTokens(messages: AiChatMessage[]): number {
+    return this.estimateTokens(messages.map((message) => message.content).join('\n'));
+  }
+
+  private estimateTokens(value: string): number {
+    return Math.ceil(value.length / 4);
+  }
+
+  private readTokenUsage(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+      ? Math.trunc(value)
+      : null;
   }
 
   private normalizeBaseUrl(value: string): string {
@@ -633,217 +1246,6 @@ export class AiService {
       'message' in payload &&
       typeof payload.message === 'string'
     );
-  }
-
-  private classifyModel(modelId: string): {
-    tier: AiModelTier;
-    quality: AiModelSignal;
-    speed: AiModelSignal;
-    cost: AiModelSignal;
-    score: number;
-    speedScore: number;
-    valueScore: number;
-    sortRank: number;
-  } {
-    const lowerModelId = modelId.toLowerCase();
-    const known = this.findKnownModelSignal(lowerModelId);
-    const score = known?.score ?? this.estimateModelScore(lowerModelId);
-    const speedScore = known?.speedScore ?? this.estimateSpeedScore(lowerModelId);
-    const valueScore = known?.valueScore ?? this.estimateValueScore(lowerModelId, speedScore);
-
-    return {
-      tier: known?.tier ?? this.estimateTier(lowerModelId),
-      quality: known?.quality ?? this.signalFromScore(score),
-      speed: known?.speed ?? this.signalFromScore(speedScore),
-      cost: known?.cost ?? (valueScore >= 78 ? 'low' : valueScore >= 55 ? 'medium' : 'high'),
-      score,
-      speedScore,
-      valueScore,
-      sortRank: known?.sortRank ?? this.estimateSortRank(lowerModelId),
-    };
-  }
-
-  private findKnownModelSignal(
-    modelId: string,
-  ): Partial<
-    Pick<
-      AiModelResponse,
-      | 'tier'
-      | 'quality'
-      | 'speed'
-      | 'cost'
-      | 'score'
-      | 'speedScore'
-      | 'valueScore'
-      | 'sortRank'
-      | 'capabilities'
-    >
-  > | null {
-    return (
-      Object.entries(knownModelSignals)
-        .sort(([left], [right]) => right.length - left.length)
-        .find(([knownId]) => this.isKnownModelMatch(modelId, knownId))?.[1] ?? null
-    );
-  }
-
-  private isKnownModelMatch(modelId: string, knownId: string): boolean {
-    return (
-      modelId === knownId ||
-      modelId.startsWith(`${knownId}-`) ||
-      modelId.startsWith(`${knownId}:`) ||
-      modelId.startsWith(`${knownId}/`)
-    );
-  }
-
-  private estimateTier(modelId: string): AiModelTier {
-    if (modelId.includes(':free') || modelId.includes('-free') || modelId.includes('free')) {
-      return 'free';
-    }
-
-    if (/^(gpt-|o\d|chatgpt-|computer-use|codex)/.test(modelId)) {
-      return 'paid';
-    }
-
-    return 'unknown';
-  }
-
-  private estimateModelScore(modelId: string): number {
-    if (modelId.includes('gpt-5')) {
-      return modelId.includes('nano') ? 68 : modelId.includes('mini') ? 82 : 90;
-    }
-
-    if (modelId.includes('gpt-4.1')) {
-      return modelId.includes('nano') ? 56 : modelId.includes('mini') ? 72 : 83;
-    }
-
-    if (modelId.includes('gpt-4o')) {
-      return modelId.includes('mini') ? 66 : 78;
-    }
-
-    if (modelId.startsWith('o4')) {
-      return 74;
-    }
-
-    if (modelId.startsWith('o3')) {
-      return modelId.includes('mini') ? 58 : 82;
-    }
-
-    if (modelId.startsWith('o1')) {
-      return modelId.includes('mini') ? 48 : 70;
-    }
-
-    return 50;
-  }
-
-  private estimateSpeedScore(modelId: string): number {
-    if (modelId.includes('nano')) {
-      return 98;
-    }
-
-    if (modelId.includes('mini')) {
-      return 88;
-    }
-
-    if (modelId.includes('pro')) {
-      return 46;
-    }
-
-    if (modelId.includes('turbo')) {
-      return 78;
-    }
-
-    return 68;
-  }
-
-  private estimateValueScore(modelId: string, speedScore: number): number {
-    if (modelId.includes('nano')) {
-      return 88;
-    }
-
-    if (modelId.includes('mini')) {
-      return 82;
-    }
-
-    if (modelId.includes('pro')) {
-      return 36;
-    }
-
-    if (modelId.includes('turbo')) {
-      return 62;
-    }
-
-    return Math.max(
-      35,
-      Math.min(82, Math.round((speedScore + this.estimateModelScore(modelId)) / 2 - 8)),
-    );
-  }
-
-  private estimateSortRank(modelId: string): number {
-    const gptMatch = modelId.match(/gpt-(\d)(?:\.(\d))?(?:\.(\d))?/);
-
-    if (gptMatch) {
-      const major = Number(gptMatch[1] ?? 0);
-      const minor = Number(gptMatch[2] ?? 0);
-      const patch = Number(gptMatch[3] ?? 0);
-      const sizeBonus = modelId.includes('pro')
-        ? 20
-        : modelId.includes('mini')
-          ? 10
-          : modelId.includes('nano')
-            ? 5
-            : 0;
-
-      return major * 1000 + minor * 100 + patch * 10 + sizeBonus;
-    }
-
-    const reasoningMatch = modelId.match(/^o(\d)/);
-
-    if (reasoningMatch) {
-      return Number(reasoningMatch[1]) * 1000 + (modelId.includes('mini') ? 10 : 20);
-    }
-
-    return 0;
-  }
-
-  private createSortRank(
-    modelId: string,
-    baseSortRank: number,
-    providerCreatedAt: number | null,
-  ): number {
-    return (
-      baseSortRank * sortRankMultiplier +
-      (providerCreatedAt ?? this.extractDateRankFromModelId(modelId) ?? 0)
-    );
-  }
-
-  private normalizeProviderCreatedAt(value: unknown): number | null {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-      return null;
-    }
-
-    return Math.trunc(value);
-  }
-
-  private extractDateRankFromModelId(modelId: string): number | null {
-    const dateMatch = modelId.match(/(?:^|[-_])(\d{4})[-_]?(\d{2})[-_]?(\d{2})(?:$|[-_])/);
-
-    if (!dateMatch) {
-      return null;
-    }
-
-    return Number(`${dateMatch[1]}${dateMatch[2]}${dateMatch[3]}`);
-  }
-
-  private signalFromScore(score: number): AiModelSignal {
-    if (score >= 75) {
-      return 'high';
-    }
-
-    if (score >= 50) {
-      return 'medium';
-    }
-
-    return 'low';
   }
 
   private parseCapabilities(raw: string): string[] {

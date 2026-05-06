@@ -7,6 +7,14 @@ function normalizeLineEndings(value: string): string {
   return value.replace(/\r\n?/g, '\n').trim();
 }
 
+function formatJson(value: string): string | null {
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2);
+  } catch {
+    return null;
+  }
+}
+
 function indentBraces(value: string): string {
   const normalized = normalizeLineEndings(value)
     .replace(/\s*([{};])\s*/g, '$1\n')
@@ -85,7 +93,7 @@ export function formatCodeText(value: string, language: string): string {
 
   if (normalizedLanguage === 'auto') {
     if (/^[[{]/.test(normalizedValue)) {
-      return JSON.stringify(JSON.parse(normalizedValue), null, 2);
+      return formatJson(normalizedValue) ?? normalizedValue;
     }
 
     if (/^<[\w!?/]/.test(normalizedValue)) {
@@ -100,7 +108,7 @@ export function formatCodeText(value: string, language: string): string {
   }
 
   if (normalizedLanguage === 'json') {
-    return JSON.stringify(JSON.parse(normalizedValue), null, 2);
+    return formatJson(normalizedValue) ?? normalizedValue;
   }
 
   if (normalizedLanguage === 'xml') {

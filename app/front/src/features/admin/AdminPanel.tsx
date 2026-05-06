@@ -1,6 +1,7 @@
 import {
   ArrowUpDown,
   BarChart3,
+  Bot,
   History,
   Menu,
   RefreshCw,
@@ -32,10 +33,11 @@ import {
   type ActivitySort,
 } from './adminFilters';
 import { AdminCreateUserModal } from './AdminCreateUserModal';
+import { AdminIntegrationsPanel } from './AdminIntegrationsPanel';
 import { AdminStatsView } from './AdminStatsView';
 import { AdminUserCard } from './AdminUserCard';
 
-type AdminTab = 'users' | 'activity' | 'stats';
+type AdminTab = 'users' | 'activity' | 'stats' | 'integrations';
 
 interface AdminPanelProps {
   currentUserId: number;
@@ -101,6 +103,12 @@ export function AdminPanel({
           return t('actionAiChat');
         case 'ai.tool.execute':
           return t('actionAiToolExecute');
+        case 'ai.bot.settings.update':
+          return t('actionAiBotSettingsUpdate');
+        case 'ai.bot.connection.check':
+          return t('actionAiBotConnectionCheck');
+        case 'ai.bot.message':
+          return t('actionAiBotMessage');
         case 'admin.user.create':
           return t('actionAdminUserCreate');
         case 'admin.user.update':
@@ -319,6 +327,16 @@ export function AdminPanel({
         >
           <BarChart3 size={15} /> {t('adminStats')}
         </button>
+        <button
+          className={
+            tab === 'integrations'
+              ? 'admin-tabs__item admin-tabs__item--active'
+              : 'admin-tabs__item'
+          }
+          onClick={() => setTab('integrations')}
+        >
+          <Bot size={15} /> {t('adminIntegrations')}
+        </button>
       </div>
 
       {tab === 'users' ? (
@@ -506,6 +524,10 @@ export function AdminPanel({
           t={t}
           onActivityRangeChange={setActivityRange}
         />
+      ) : null}
+
+      {tab === 'integrations' ? (
+        <AdminIntegrationsPanel t={t} onError={onError} onSuccess={onSuccess} />
       ) : null}
     </section>
   );

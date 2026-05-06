@@ -25,7 +25,7 @@ Production-поток:
 - Backend увеличивает JSON body limit до 30 MB для base64-загрузки вложений; бизнес-лимит размера файла задается `MAX_UPLOAD_SIZE_MB`.
 - `AdminModule` - пользователи, история действий и статистика; агрегаты статистики вынесены в `AdminStatsService`.
 - `ActivityModule` - запись и чтение audit-событий.
-- `AiModule` - изолированный AI-слой: настройки provider, шифрование AI API key, синхронизация моделей, chat gateway через OpenAI-compatible API и tool registry для действий с заметками.
+- `AiModule` - изолированный AI-слой: настройки provider, шифрование AI API key, синхронизация моделей, локальный каталог моделей, chat gateway через OpenAI-compatible API, tool registry для действий с заметками и runtime Telegram/VK webhook-ботов.
 
 ### Конфигурация
 
@@ -41,6 +41,8 @@ Production-поток:
 - `AUTH_TOKEN_TTL_SECONDS`
 - `SECRET_ENCRYPTION_KEY`
 - `AI_CREDENTIALS_ENCRYPTION_KEY`
+- `AI_MODEL_CATALOG_URL`
+- `AI_TRANSCRIPTION_MODEL`
 - `UPLOAD_DIR`
 - `MAX_UPLOAD_SIZE_MB`
 - `ALLOWED_UPLOAD_EXTENSIONS`
@@ -143,12 +145,21 @@ base64urlPayload.signature
 - `note_versions` - версии заметок перед изменением; хранится максимум 80 последних версий на заметку, старые записи подчищаются автоматически, а при удалении заметки связанные версии удаляются явно.
 - `note_templates` - пользовательские и системные шаблоны.
 - `attachments` - метаданные файлов аккаунта: `note_id` может быть `NULL`, `user_id` всегда владелец файла, имя, MIME type, размер и `storage_path`; сами файлы лежат в `UPLOAD_DIR`. Связь с заметкой опциональная и использует `ON DELETE SET NULL`, поэтому окончательное удаление заметки отвязывает файлы, но не удаляет их. Физическая очистка файлов централизована в `AttachmentFilesService`; недоступные файлы логируются warning-сообщением и не ломают удаление записи из БД.
-- `share_links` - временные публичные ссылки с hash токена и публичным URL для повторного копирования активной ссылки.
+- `share_links` - временные публичные ссылки с hash токена, публичным URL для повторного копирования активной ссылки, флагом показа секретов и optional one-time лимитом открытий через `max_access_count`/`access_count`.
 - `share_link_access_logs` - история открытий публичных ссылок.
 - `note_fts` - SQLite FTS5 virtual table для полнотекстового поиска.
-- `ai_user_settings` - AI-настройки пользователя: enable flag, provider/base URL/model, зашифрованный API key, безопасная маска ключа и состояние проверок/синхронизации.
-- `ai_provider_models` - модели, доступные конкретному пользователю и provider/key после синхронизации; старые модели помечаются `is_deprecated`, `provider_created_at` хранит `created` из provider, если оно пришло.
-- `ai_audit_logs` - отдельная таблица будущего расширенного журнала tool-действий AI; текущие выполнения инструментов пишутся в `activity_logs` как `ai.tool.execute`.
+- `ai_user_settings` - активное состояние Notes AI пользователя: enable flag, доступ к секретам, дневные лимиты запросов/токенов и текущая пара provider/base URL.
+- `ai_provider_settings` - per-provider настройки пользователя: model, зашифрованный API key, безопасная маска ключа и состояние проверок/синхронизации для каждой пары `provider_name` + `base_url`.
+- `ai_provider_models` - модели, доступные конкретному пользователю и provider/key после синхронизации; старые модели помечаются `is_deprecated`, `provider_created_at` хранит `created` из provider, если оно пришло. Для известных OpenAI-моделей сохраняются `input_price_per_1m`, `cached_input_price_per_1m`, `output_price_per_1m`; неизвестные цены остаются `NULL`.
+- `ai_model_catalog` - локальный справочник сигналов моделей: builtin seed и optional remote JSON из `AI_MODEL_CATALOG_URL`. Хранит `score`, `speed_score`, `value_score`, `sort_rank`, tier/quality/speed/cost, цены за 1 миллион токенов, capabilities, source и `last_seen_at`. Используется как общий fallback для всех пользователей и provider-списков.
+- `ai_audit_logs` - отдельный расширенный журнал tool-действий Notes AI. Пишутся readonly и mutation tool-вызовы без сырого payload и без секретных значений; общий `activity_logs` по-прежнему хранит пользовательские события `ai.settings.update`, `ai.chat`, `ai.tool.execute`.
+- `ai_usage_logs` - учет AI-запросов и input/output tokens по пользователю, provider и модели для дневных лимитов, пользовательской месячной статистики и admin-отчета по расходам.
+- `ai_note_embeddings` - кэш embeddings для `notes.semanticSearch`: хранит provider/base URL/model, hash текстового снимка заметки и JSON-вектор. При изменении заметки hash меняется и вектор перестраивается при следующем смысловом поиске.
+- `ai_bot_admin_settings` - глобальные admin-настройки Telegram/VK ботов: включение, webhook/callback URL, encrypted tokens/secrets, политика секретов, подтверждения, общий лимит сообщений, лимит readonly-tool вызовов, лимит mutation-действий и статус последней проверки.
+- `ai_bot_user_settings` - пользовательские разрешения для ботов: включение, режим `read/write`, доступ к секретам, матрица permission-флагов по tool-группам, личные лимиты сообщений/read/write и привязанный внешний user/chat id.
+- `ai_bot_link_codes` - одноразовые hash-коды привязки Telegram/VK аккаунтов с TTL. Новый код удаляет старые коды того же пользователя/provider; активная коллизия по provider/hash проверяется до вставки.
+- `ai_bot_pending_actions` - ожидающие подтверждения mutation-действия из Telegram/VK runtime. Хранит только имя tool и JSON payload, очищается по TTL при следующем подтверждении.
+- `ai_bot_usage_logs` - дневной учет использования Telegram/VK ботов по `provider` и типам `message`, `read`, `write`. Используется для раздельных лимитов сообщений, чтения и изменений; записи удаляются каскадно при удалении пользователя.
 
 ### `activity_logs`
 
@@ -168,6 +179,9 @@ base64urlPayload.signature
 - `idx_activity_created`
 - `idx_activity_user`
 - `idx_activity_actor`
+- `idx_activity_action_created`
+- `idx_ai_usage_logs_created_user`
+- `idx_ai_bot_usage_logs_created`
 
 Для активных публичных ссылок используется индекс `idx_share_links_active`.
 
@@ -203,14 +217,16 @@ base64urlPayload.signature
 Отвечает за функции, которые не являются базовым CRUD заметки:
 
 - шаблоны заметок;
-- экспорт JSON в файл с зашифрованными `data-value` для secret/password/token copy fields;
+- экспорт JSON в файл с зашифрованными `data-value` для secret/password/token полей данных;
 - импорт JSON из файла с восстановлением тегов, избранного, закрепления и parent-связей;
 - вложения и файловое хранилище: глобальный список файлов аккаунта, загрузка, привязка/отвязка к заметкам, список файлов заметки, переименование, скачивание, удаление и ZIP-архив без хранения бинарного содержимого в SQLite;
 - временные публичные ссылки.
 
+Экспорт JSON загружает теги заметок batch-запросом по всем note ids, без N+1 запросов на каждую заметку. Импорт JSON выполняется в SQLite-транзакции: если одна из заметок, связей или шаблонов не проходит валидацию/запись, частично импортированное состояние не остается.
+
 ### `SecretFieldCryptoService`
 
-Шифрует и расшифровывает `data-value` у secret/password/token copy fields. Используется при сохранении и чтении заметок и шаблонов.
+Шифрует и расшифровывает `data-value` у secret/password/token полей данных. Используется при сохранении и чтении заметок и шаблонов.
 
 ### `AdminService`
 
@@ -234,9 +250,13 @@ Backend не дает удалить собственный admin-аккаунт
 - `notes.update`;
 - `notes.move`;
 - `notes.delete`;
+- `notes.delete_all`;
 - `ai.settings.update`;
 - `ai.chat`;
 - `ai.tool.execute`;
+- `ai.bot.settings.update`;
+- `ai.bot.connection.check`;
+- `ai.bot.message`;
 - `admin.user.create`;
 - `admin.user.update`;
 - `admin.user.delete`.
@@ -251,22 +271,39 @@ Backend не дает удалить собственный admin-аккаунт
 - `updateSettings(userId, dto)`;
 - `syncModels(userId)`;
 - `testConnection(userId)`;
-- `chat(userId, dto)`;
+- `chat(userId, dto, options)`;
 - `executeAction(userId, dto)`.
 
-Сервис работает через `DatabaseService`, `AiCryptoService`, `AiToolsService` и `ActivityService`.
+Сервис работает через `DatabaseService`, `AiCryptoService`, `AiModelCatalogService`, `AiToolsService` и `ActivityService`.
 Вызовы моделей идут через OpenAI-compatible HTTP API:
 
 - `GET <baseUrl>/models` для синхронизации;
 - `POST <baseUrl>/chat/completions` для чата.
+- `POST <baseUrl>/embeddings` для смыслового поиска `notes.semanticSearch`.
 
 Chat-запрос отправляется без `temperature`, чтобы один и тот же gateway работал с GPT-5/reasoning моделями и OpenAI-compatible providers, которые не принимают sampling-параметры для части моделей. Служебная инструкция идет как `developer` message вместо `system`, что корректнее для новых OpenAI моделей в Chat Completions. Ошибка provider нормализуется в короткий `BadRequestException` без токенов и секретов.
 
-Если модель возвращает tool-call, `AiService` передает его в `AiToolsService`. Readonly tools выполняются сразу, а мутации возвращаются в UI как preview-действия и выполняются только через `POST /api/ai/actions/execute` после подтверждения пользователя. Backend не перехватывает команды локальными парсерами: модель сама читает текущий контекст, выбирает tool и формирует полный `contentHtml/contentText`.
+Расчет стоимости Notes AI строится из raw usage, а не из сохраненных денежных итогов: backend берет строки `ai_usage_logs`, сопоставляет модель с ценой за 1 миллион токенов из `ai_provider_models`, `ai_model_catalog` или локального fallback-каталога `ai-pricing.ts`, а неизвестные цены оставляет как `null`. Поэтому месячная статистика пользователя и admin-статистика показывают известную часть суммы и отдельный признак неизвестной цены.
 
-После синхронизации `AiService` пересчитывает локальные `score`, `speedScore`, `valueScore` и `sortRank` для каждой модели. Эти значения не приходят как готовый рейтинг от provider: frontend показывает только цветовую полоску эффективности, а `sortRank` использует для порядка моделей. `sortRank` учитывает семейство модели и `provider_created_at`, чтобы новые версии шли выше старых.
+Если модель возвращает tool-call, `AiService` передает его в `AiToolsService`. Readonly tools выполняются сразу. Мутации возвращаются в UI как preview-действия и выполняются через `POST /api/ai/actions/execute`, когда `requireActionConfirmation=true`; если пользователь выключил подтверждение в настройках Notes AI, `AiService` сразу выполняет mutation-действия и возвращает результаты в `executions[]`. Ошибка подготовки tool-call и ошибка одного auto-execute действия возвращаются текстом в ответе чата, а не валят весь `/api/ai/chat`. Backend не перехватывает команды локальными парсерами: модель сама читает текущий контекст, выбирает tool и формирует полный `contentHtml/contentText`.
+Bot runtime вызывает тот же `chat` и `executeAction`, но передает `allowReadSecretsOverride` и `allowedToolNames`. Так Telegram/VK применяет более строгую политику секретов и матрицу прав поверх обычных UI-настроек Notes AI. `AiService` отправляет provider только разрешенные tools, а `AiToolsService` повторно отклоняет disallowed tool-call или pending action перед выполнением.
+
+После синхронизации `AiService` делегирует классификацию моделей в `AiModelCatalogService`: сервис каталога отдает `score`, `speedScore`, `valueScore`, `tier`, `quality`, `speed`, `cost` и общий `sortRank`, а также вычисляет fallback для неизвестных моделей. Эти значения не приходят как готовый рейтинг от provider: frontend показывает только цветовую полоску эффективности, а `sortRank` использует для порядка моделей. `sortRank` учитывает семейство модели и `provider_created_at`, чтобы новые версии шли выше старых.
 
 `baseUrl` валидируется как HTTPS URL. API key не логируется и не возвращается клиенту.
+
+### `AiModelCatalogService`
+
+Отвечает за общий справочник моделей:
+
+- при старте заполняет `ai_model_catalog` builtin-сигналами известных моделей;
+- раз в 24 часа пробует обновиться из `AI_MODEL_CATALOG_URL`, если переменная задана;
+- поддерживает ручной admin-sync через `POST /api/ai/models/catalog/sync`;
+- ищет точное совпадение модели или ближайший prefix-match для provider id вида `openai/gpt-5.2`;
+- отдает `score`, `speedScore`, `valueScore`, `sortRank`, capabilities и цены для `AiService`;
+- держит короткий in-memory cache для точных/prefix lookup, чтобы список моделей и расчеты стоимости не сканировали таблицу повторно на каждом запросе;
+- инвалидирует cache после builtin/remote upsert каталога;
+- remote JSON нормализуется на входе, поэтому неизвестные или некорректные поля не ломают синхронизацию.
 
 ### `AiToolsService`
 
@@ -275,38 +312,83 @@ Chat-запрос отправляется без `temperature`, чтобы од
 Поддержанные tools:
 
 - `notes.search`;
+- `notes.semanticSearch`;
 - `notes.read`;
 - `notes.create`;
+- `notes.createNestedBatch`;
 - `notes.update`;
 - `notes.tags.set`;
+- `notes.autotag`;
 - `notes.favorite.set`;
 - `notes.pinned.set`;
 - `notes.delete`;
+- `notes.deleteAll`;
 - `notes.restore`;
 - `templates.list`;
 - `templates.createNote`;
 - `versions.list`;
 - `versions.restore`;
 - `attachments.list`;
-- `shareLinks.create`.
+- `attachments.attachToNote`;
+- `shareLinks.create`;
+- `admin.users.list`;
+- `admin.stats.read`.
 
 Имена tool-calls для provider отправляются в безопасном формате с `_`, а внутри приложения мапятся обратно в dotted names.
+Каждый выполненный readonly/mutation tool дополнительно фиксируется в `ai_audit_logs`: сохраняются имя действия, режим, целевой `noteId`, если он есть, и технические ключи payload без содержимого заметок, токенов, паролей и API-ключей.
+
+`AiToolsService` принимает `noteId` как основной идентификатор заметки. Для устойчивости к provider/tool-call особенностям backend также принимает alias `id` и числовые строки, но developer prompt всегда должен передавать модели текущую заметку как `noteId=<number>` и требовать использовать именно `noteId` в payload.
+`notes.create` принимает optional `parentId` для дочерних заметок. В prompt закреплено, что заметка может быть одновременно текстовой записью и родителем других заметок; для команд “создай внутри/под текущей/в подзаметке” модель должна передавать `parentId`, а не менять контент родителя.
+`notes.createNestedBatch` закрывает массовые команды по дереву без пустого поиска и без десятков отдельных tool-calls. Для `scope=allActiveNotes` `NotesService` берет снимок активных заметок до создания новых записей, затем создает direct children и nested children, ограничивая batch максимумом 300 новых заметок. Для продолжения предыдущих batch-команд есть `scope=recentNamedNotes`: backend выбирает последние заметки текущего пользователя по `parentNames`, optional `expectedParentCount` и окну `recentWithinMinutes`, чтобы модель могла продолжить работу с новыми `Вложение 1`/`Вложение 2` без ручного перечисления всех id.
+`attachments.attachToNote` переиспользует `WorkspaceService.attachAttachmentToNote`, поэтому проверка владельца файла и целевой заметки остается общей с обычным UI. `admin.users.list` и `admin.stats.read` дополнительно проверяют роль пользователя в backend и доступны только `admin`.
+
+### `AiEmbeddingsService`
+
+Отвечает только за смысловой поиск Notes AI:
+
+- берет текущие provider/base URL/API key пользователя из AI-настроек;
+- выбирает embedding model: если выбранная модель уже похожа на embeddings-модель, использует ее, иначе применяет `text-embedding-3-small`;
+- отправляет в embeddings-provider до 300 последних активных заметок пользователя и поисковый запрос;
+- кэширует vectors в `ai_note_embeddings` по `content_hash`;
+- не отправляет secret/password/token значения в embeddings, если доступ к секретам выключен;
+- пишет token usage embeddings-запросов в `ai_usage_logs`;
+- при ошибке provider возвращает fallback обычного `NotesService.search`, чтобы чат не ломался.
 
 ### `AiCryptoService`
 
 Шифрует AI API key через AES-256-GCM и env `AI_CREDENTIALS_ENCRYPTION_KEY`.
 Полный ключ расшифровывается только на время запроса к provider.
 
+### `AiBotRuntimeService`
+
+Принимает входящие Telegram/VK webhook-сообщения через отдельный публичный controller без `AuthGuard`.
+Сервис:
+
+- проверяет включение общего бота и optional webhook secret;
+- привязывает внешний аккаунт по одноразовому коду `XXXX-XXXX-XXXX-XXXX-XXXX` из `ai_bot_link_codes`;
+- находит `ai_bot_user_settings` по `provider + linked_external_id`;
+- применяет глобальные и пользовательские дневные лимиты bot-запросов: сообщения, readonly-tool вызовы и mutation-действия;
+- для голосовых Telegram/VK сообщений скачивает аудио до 25 MB во временный memory-buffer, распознает его через `AiService.transcribeAudio` и передает расшифровку в тот же Notes AI pipeline; аудио не сохраняется на диск и не пишется в БД;
+- отправляет текст в `AiService.chat`;
+- выполняет readonly ответы сразу;
+- для mutation actions проверяет `accessMode: write`, создает pending action на 10 минут и ждет команду `подтвердить` или `подтвердить <id>`;
+- отправляет ответы через Telegram `sendMessage` или VK `messages.send`.
+
 ## Frontend
 
 ### Основные файлы
 
 - `src/App.tsx` - легкий bootstrap/auth слой: login screen, guest theme/language, toast-host и lazy-загрузка рабочей области после входа.
-- `features/app/AuthenticatedApp.tsx` - рабочая область после авторизации: notes workspace, editor, sidebar, модалки заметок и lazy-загрузка админки.
-- `features/ai/AiAssistant.tsx` - изолированный AI widget: плавающая кнопка, чат, настройки provider и карточки подтверждения AI-действий.
+- `features/app/AuthenticatedApp.tsx` - рабочая область после авторизации: notes workspace, editor, sidebar, командная палитра, модалки заметок и lazy-загрузка админки.
+- `features/app/CommandPalette.tsx` - кастомная палитра быстрых команд `Ctrl+Shift+P` через portal: поиск, disabled-состояния, tooltip для длинных строк и запуск действий текущего workspace.
+- `features/ai/AiAssistant.tsx` - изолированный AI widget: плавающая кнопка, чат, голосовой ввод через браузерный SpeechRecognition, настройки provider, переключатель подтверждения web-действий, пользовательские настройки Telegram/VK-ботов и карточки подтверждения AI-действий.
+- `features/ai/AiBotAccessMenu.tsx` - dropdown пользовательских доступов Telegram/VK-ботов: режим работы, доступ к данным, действия, секреты и дневные лимиты.
+- `features/ai/aiAssistant.helpers.ts` - чистые helpers AI-виджета: draft settings, provider presets, группировка/сортировка моделей и merge настроек Telegram/VK-ботов.
 - `src/api.ts` - typed API client и Bearer token.
 - `src/i18n.ts` - RU/EN словарь.
 - `src/types.ts` - общие frontend-типы.
+- `utils/formText.ts` - общие текстовые helpers форм, включая безопасный placeholder для сохраненных ключей без показа полного секрета.
+- `utils/numberFormatting.ts` - общий формат tokens, USD, цен моделей и числовых лимитов для AI-чата, admin-интеграций и admin-статистики.
 - `src/styles.css` - дизайн-токены, темы и компоненты.
 - `public/favicon.svg` - фавиконка приложения; читаемый размер в браузерной вкладке задается `viewBox` с сохранением всего контура без обрезки, Vite копирует файл в корень backend static build.
 
@@ -340,7 +422,7 @@ Chat-запрос отправляется без `temperature`, чтобы од
 - `editor/RichTextToolbar.tsx` - toolbar редактора и верхнее меню действий заметки.
 - `editor/CodeBlockView.tsx` - кастомный code block: язык, форматирование, нумерация строк.
 - `editor/editorCode.ts` - форматирование code block и selection-логика.
-- `editor/copyFieldLabels.ts` - labels для copy fields.
+- `editor/copyFieldLabels.ts` - labels для полей данных.
 - `editor/CopyField.tsx` - атомарное поле копирования, secret-маскирование, генерация пароля.
 - `editor/CopyFieldKindMenu.tsx` - compact type menu.
 - `editor/EditorLinkTooltip.tsx` - tooltip ссылок в режиме редактирования.
@@ -371,7 +453,7 @@ Frontend использует route/code splitting через `React.lazy()` и 
 - Tiptap editor, lowlight и notes workspace не попадают в login bundle;
 - `AdminPanel` загружается отдельным chunk только при переходе в панель администратора.
 - Инструменты заметки встроены в рабочий chunk редактора и больше не используют отдельное общее окно инструментов.
-- `vite.config.ts` дополнительно выделяет `editor-vendor`, `code-languages`, `icons` и общий `vendor` через `manualChunks`, чтобы тяжелые зависимости редактора и grammar-файлы не склеивались с прикладным кодом.
+- `vite.config.ts` дополнительно выделяет `editor-vendor`, `code-vendor`, `icons` и общий `vendor` через `manualChunks`, чтобы тяжелые зависимости редактора и grammar-файлы не склеивались с прикладным кодом.
 - Подсветка кода импортирует только нужные grammars highlight.js; языки без отдельной grammar продолжают уходить в auto/plain fallback.
 
 Fallback для lazy-загрузки использует существующий компактный loader, поэтому поведение UI не меняется.

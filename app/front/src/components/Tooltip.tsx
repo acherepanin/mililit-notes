@@ -3,7 +3,7 @@ import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 interface TooltipProps {
-  label: string;
+  label: ReactNode;
   children: ReactNode;
   className?: string;
 }

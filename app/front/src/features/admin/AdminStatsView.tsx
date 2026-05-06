@@ -16,6 +16,7 @@ import { TooltipText } from '../../components/TooltipText';
 import type { Translator } from '../../i18n';
 import type { AdminStats, AdminStatsRange, UserLanguage } from '../../types';
 import { formatFileSize } from '../../utils/files';
+import { compactTokenCount, formatUsd } from '../../utils/numberFormatting';
 
 type StatTone = 'blue' | 'cyan' | 'amber' | 'rose' | 'violet';
 
@@ -357,6 +358,41 @@ export function AdminStatsView({
                     </i>
                     <em>{model.usersTotal}</em>
                   </label>
+                ))}
+              </div>
+            ) : null}
+            {stats.aiMonthlySpendUsers.length > 0 ? (
+              <div className="stats-ai-spend">
+                <span className="stats-ai-subtitle">{t('adminAiMonthlySpend')}</span>
+                {stats.aiMonthlySpendUsers.map((user) => (
+                  <article className="stats-ai-spend-user" key={user.userId}>
+                    <header>
+                      <TooltipText value={user.username} />
+                      <strong>
+                        {formatUsd(user.knownCostUsd)}
+                        {user.hasUnknownCost ? ' + ?' : ''}
+                      </strong>
+                    </header>
+                    <small>
+                      {compactTokenCount(user.tokens)} {t('aiTokens')} / {user.requests}{' '}
+                      {t('aiUsageRequests').toLowerCase()}
+                      {user.hasUnknownCost ? `, ${t('adminAiSpendUnknown')}` : ''}
+                    </small>
+                    <div className="stats-ai-spend-models">
+                      {user.models.map((model) => (
+                        <span
+                          className="stats-ai-spend-model"
+                          key={`${user.userId}-${model.providerName}-${model.model}`}
+                        >
+                          <TooltipText value={model.model} />
+                          <b>
+                            {model.costUsd === null ? '?' : formatUsd(model.costUsd)} /{' '}
+                            {compactTokenCount(model.tokens)}
+                          </b>
+                        </span>
+                      ))}
+                    </div>
+                  </article>
                 ))}
               </div>
             ) : null}

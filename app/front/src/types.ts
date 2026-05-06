@@ -130,6 +130,7 @@ export interface AdminStats {
   topStorageUsers: AdminStorageUser[];
   topActivityUsers: AdminActivityUser[];
   topAiModels: AdminAiModelStat[];
+  aiMonthlySpendUsers: AdminAiSpendUser[];
   fileTypes: AdminFileTypeStat[];
 }
 
@@ -164,6 +165,28 @@ export interface AdminFileTypeStat {
 export interface AdminAiModelStat {
   model: string;
   usersTotal: number;
+}
+
+export interface AdminAiSpendModel {
+  providerName: string;
+  model: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokens: number;
+  costUsd: number | null;
+}
+
+export interface AdminAiSpendUser {
+  userId: number;
+  username: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokens: number;
+  knownCostUsd: number;
+  hasUnknownCost: boolean;
+  models: AdminAiSpendModel[];
 }
 
 export interface NoteVersion {
@@ -215,6 +238,9 @@ export interface ShareLink {
   url: string;
   expiresAt: string;
   includeSecrets: boolean;
+  oneTime: boolean;
+  accessCount: number;
+  maxAccessCount: number | null;
   revokedAt: string | null;
   createdAt: string;
   lastAccessedAt: string | null;
@@ -227,6 +253,19 @@ export interface PublicShare {
 
 export type AiModelTier = 'free' | 'paid' | 'unknown';
 export type AiModelSignal = 'low' | 'medium' | 'high' | 'unknown';
+export type AiBotProvider = 'telegram' | 'vk';
+export type AiBotAccessMode = 'read' | 'write';
+
+export interface AiBotPermissions {
+  readNotes: boolean;
+  writeNotes: boolean;
+  deleteNotes: boolean;
+  manageTags: boolean;
+  useTemplates: boolean;
+  useVersions: boolean;
+  listAttachments: boolean;
+  createShareLinks: boolean;
+}
 
 export interface AiModel {
   id: string;
@@ -235,6 +274,9 @@ export interface AiModel {
   quality: AiModelSignal;
   speed: AiModelSignal;
   cost: AiModelSignal;
+  inputPricePer1M: number | null;
+  cachedInputPricePer1M: number | null;
+  outputPricePer1M: number | null;
   score: number;
   speedScore: number;
   valueScore: number;
@@ -245,6 +287,11 @@ export interface AiModel {
 
 export interface AiSettings {
   enabled: boolean;
+  allowReadSecrets: boolean;
+  requireActionConfirmation: boolean;
+  dailyRequestLimit: number | null;
+  dailyTokenLimit: number | null;
+  usageToday: AiUsageSummary;
   providerName: string;
   baseUrl: string;
   model: string | null;
@@ -257,10 +304,57 @@ export interface AiSettings {
   modelsSyncStatus: string | null;
   modelsSyncError: string | null;
   models: AiModel[];
+  providers: AiSavedProvider[];
+}
+
+export interface AiUsageSummary {
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokens: number;
+}
+
+export interface AiMonthlyUsageModel {
+  providerName: string;
+  model: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokens: number;
+  costUsd: number | null;
+  inputPricePer1M: number | null;
+  cachedInputPricePer1M: number | null;
+  outputPricePer1M: number | null;
+}
+
+export interface AiMonthlyUsage {
+  monthStart: string;
+  monthEnd: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokens: number;
+  knownCostUsd: number;
+  hasUnknownCost: boolean;
+  models: AiMonthlyUsageModel[];
+}
+
+export interface AiSavedProvider {
+  providerName: string;
+  baseUrl: string;
+  model: string | null;
+  hasApiKey: boolean;
+  apiKeyHint: string | null;
+  apiKeyUpdatedAt: string | null;
+  updatedAt: string;
 }
 
 export interface UpdateAiSettingsPayload {
   enabled?: boolean;
+  allowReadSecrets?: boolean;
+  requireActionConfirmation?: boolean;
+  dailyRequestLimit?: number | null;
+  dailyTokenLimit?: number | null;
   providerName?: string;
   baseUrl?: string;
   model?: string | null;
@@ -285,6 +379,7 @@ export interface AiToolAction {
 export interface AiChatResponse {
   message: AiChatMessage;
   actions?: AiToolAction[];
+  executions?: AiToolExecutionResponse[];
 }
 
 export interface AiCurrentNoteContext {
@@ -296,6 +391,84 @@ export interface AiCurrentNoteContext {
 
 export interface AiToolExecutionResponse {
   message: AiChatMessage;
+  actionName?: string;
   noteId?: number;
   refreshTree?: boolean;
+}
+
+export interface AiBotAdminSettings {
+  provider: AiBotProvider;
+  enabled: boolean;
+  webhookUrl: string | null;
+  hasBotToken: boolean;
+  botTokenHint: string | null;
+  hasAccessToken: boolean;
+  accessTokenHint: string | null;
+  hasSecret: boolean;
+  secretHint: string | null;
+  groupId: string | null;
+  confirmationCode: string | null;
+  allowSecrets: boolean;
+  requireConfirmation: boolean;
+  dailyRequestLimit: number | null;
+  dailyReadLimit: number | null;
+  dailyWriteLimit: number | null;
+  lastCheckAt: string | null;
+  lastCheckStatus: string | null;
+  lastCheckError: string | null;
+  updatedAt: string;
+}
+
+export interface UpdateAiBotAdminSettingsPayload {
+  enabled?: boolean;
+  webhookUrl?: string | null;
+  botToken?: string;
+  clearBotToken?: boolean;
+  accessToken?: string;
+  clearAccessToken?: boolean;
+  secret?: string;
+  clearSecret?: boolean;
+  groupId?: string | null;
+  confirmationCode?: string | null;
+  allowSecrets?: boolean;
+  requireConfirmation?: boolean;
+  dailyRequestLimit?: number | null;
+  dailyReadLimit?: number | null;
+  dailyWriteLimit?: number | null;
+}
+
+export interface AiBotConnectionCheck {
+  ok: boolean;
+  checkedAt: string;
+  message: string;
+}
+
+export interface AiBotUserSettings {
+  provider: AiBotProvider;
+  enabled: boolean;
+  accessMode: AiBotAccessMode;
+  allowSecrets: boolean;
+  permissions: AiBotPermissions;
+  dailyRequestLimit: number | null;
+  dailyReadLimit: number | null;
+  dailyWriteLimit: number | null;
+  linkedExternalId: string | null;
+  linkedUsername: string | null;
+  linkedAt: string | null;
+}
+
+export interface UpdateAiBotUserSettingsPayload {
+  enabled?: boolean;
+  accessMode?: AiBotAccessMode;
+  allowSecrets?: boolean;
+  permissions?: Partial<AiBotPermissions>;
+  dailyRequestLimit?: number | null;
+  dailyReadLimit?: number | null;
+  dailyWriteLimit?: number | null;
+}
+
+export interface AiBotLinkCode {
+  provider: AiBotProvider;
+  code: string;
+  expiresAt: string;
 }

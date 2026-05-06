@@ -19,8 +19,7 @@ interface UseAppShortcutsParams {
   selectedId: number | null;
   createDefaultNote: (parentId: number | null) => void;
   formatEditorCode: () => void;
-  insertCopyField: () => void;
-  insertSecretField: () => void;
+  insertDataField: () => void;
   openLinkModal: () => void;
   openTemplatesModal: () => void;
   saveEditorContent: () => void;
@@ -34,14 +33,14 @@ export function useShortcutItems(t: Translator): ShortcutItem[] {
   return useMemo(
     () => [
       { keys: ['Ctrl', 'S'], label: t('shortcutSave') },
+      { keys: ['Ctrl', 'Shift', 'P'], label: t('commandPalette') },
       { keys: ['Ctrl', 'P'], label: t('templates') },
       { keys: ['Ctrl', 'Alt', 'N'], label: t('shortcutNewFocused') },
       { keys: ['Ctrl', '/'], label: t('shortcutSearch') },
       { keys: ['Ctrl', 'K'], label: t('shortcutLink') },
       { keys: ['Ctrl', 'Alt', 'F'], label: t('shortcutFormatCode') },
       { keys: ['Ctrl', 'Alt', '`'], label: t('shortcutCodeBlock') },
-      { keys: ['Ctrl', 'Alt', 'C'], label: t('shortcutCopyField') },
-      { keys: ['Ctrl', 'Alt', 'P'], label: t('shortcutSecretField') },
+      { keys: ['Ctrl', 'Alt', 'C'], label: t('shortcutDataField') },
       { keys: ['Ctrl', 'Alt', 'T'], label: t('shortcutTheme') },
       { keys: ['Ctrl', 'Alt', 'G'], label: t('shortcutLanguage') },
       { keys: ['Ctrl', '\\'], label: t('shortcutSidebar') },
@@ -65,8 +64,7 @@ export function useAppShortcuts({
   selectedId,
   createDefaultNote,
   formatEditorCode,
-  insertCopyField,
-  insertSecretField,
+  insertDataField,
   openLinkModal,
   openTemplatesModal,
   saveEditorContent,
@@ -96,7 +94,7 @@ export function useAppShortcuts({
         return;
       }
 
-      if (code === 'KeyP' && !event.altKey) {
+      if (code === 'KeyP' && !event.altKey && !event.shiftKey) {
         event.preventDefault();
         openTemplatesModal();
         return;
@@ -159,15 +157,7 @@ export function useAppShortcuts({
       if (event.altKey && code === 'KeyC') {
         event.preventDefault();
         if (isEditorEditing) {
-          insertCopyField();
-        }
-        return;
-      }
-
-      if (event.altKey && code === 'KeyP') {
-        event.preventDefault();
-        if (isEditorEditing) {
-          insertSecretField();
+          insertDataField();
         }
         return;
       }
@@ -197,8 +187,7 @@ export function useAppShortcuts({
     createDefaultNote,
     editor,
     formatEditorCode,
-    insertCopyField,
-    insertSecretField,
+    insertDataField,
     isAuthenticated,
     isEditorEditing,
     language,

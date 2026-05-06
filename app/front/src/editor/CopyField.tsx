@@ -5,6 +5,7 @@ import { Check, Clipboard, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Tooltip } from '../components/Tooltip';
+import { TooltipText } from '../components/TooltipText';
 import { CopyFieldKindMenu } from './CopyFieldKindMenu';
 import { copyFieldKinds, getKindLabel, type CopyFieldKind } from './copyFieldModel';
 
@@ -147,12 +148,14 @@ function createCopyFieldView(labels: CopyFieldLabels) {
     };
 
     const canGeneratePassword = isEditable && kind === 'password';
+    const displayLabel = label || labels.fieldLabelPlaceholder;
+    const displayValue = displayedValue || labels.fieldValuePlaceholder;
 
     return (
       <NodeViewWrapper
         className={`copy-field ${secret ? 'copy-field--secret' : ''} ${canGeneratePassword ? 'copy-field--with-generator' : ''} ${
           selected ? 'copy-field--selected' : ''
-        }`}
+        } ${!isEditable ? 'copy-field--view' : ''}`}
       >
         <CopyFieldKindMenu
           kind={kind}
@@ -160,15 +163,22 @@ function createCopyFieldView(labels: CopyFieldLabels) {
           disabled={!isEditable}
           onChange={changeKind}
         />
-        <input
-          className="copy-field__label"
-          aria-label={labels.fieldLabel}
-          autoComplete="off"
-          value={label}
-          placeholder={labels.fieldLabelPlaceholder}
-          readOnly={!isEditable}
-          onChange={(event) => updateAttributes({ label: event.target.value })}
-        />
+        {isEditable ? (
+          <input
+            className="copy-field__label"
+            aria-label={labels.fieldLabel}
+            autoComplete="off"
+            value={label}
+            placeholder={labels.fieldLabelPlaceholder}
+            onChange={(event) => updateAttributes({ label: event.target.value })}
+          />
+        ) : (
+          <TooltipText
+            value={displayLabel}
+            className="copy-field__label copy-field__label--view"
+            aria-label={labels.fieldLabel}
+          />
+        )}
         {!isEditable && safeUrl ? (
           <a
             className="copy-field__value copy-field__value--link"
@@ -177,8 +187,21 @@ function createCopyFieldView(labels: CopyFieldLabels) {
             rel="noreferrer"
             onClick={(event) => event.stopPropagation()}
           >
-            {displayedValue || labels.fieldValuePlaceholder}
+            <TooltipText value={displayValue} className="copy-field__value-text" />
           </a>
+        ) : !isEditable && secret ? (
+          <span
+            className="copy-field__value copy-field__value--view copy-field__value--secret-view"
+            aria-label={labels.fieldValue}
+          >
+            {displayValue}
+          </span>
+        ) : !isEditable ? (
+          <TooltipText
+            value={displayValue}
+            className="copy-field__value copy-field__value--view"
+            aria-label={labels.fieldValue}
+          />
         ) : (
           <input
             className={`copy-field__value ${
@@ -188,7 +211,6 @@ function createCopyFieldView(labels: CopyFieldLabels) {
             autoComplete="off"
             value={displayedValue}
             placeholder={labels.fieldValuePlaceholder}
-            readOnly={!isEditable}
             type="text"
             onChange={(event) => updateAttributes({ value: event.target.value })}
           />

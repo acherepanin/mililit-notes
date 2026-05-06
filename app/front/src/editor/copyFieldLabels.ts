@@ -3,7 +3,7 @@ import type { CopyFieldLabels } from './CopyField';
 
 export function createCopyFieldLabels(t: Translator): CopyFieldLabels {
   return {
-    defaultLabel: t('copy'),
+    defaultLabel: t('fieldKindText'),
     copiedLabel: t('copied'),
     fieldLabel: t('fieldLabel'),
     fieldValue: t('fieldValue'),

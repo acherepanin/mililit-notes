@@ -1,10 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '../infra/database.service';
+import { calculateAiUsageCostUsd, getAiModelPricing } from '../ai/ai-pricing';
 import type {
   AdminActivityDay,
   AdminActivityUser,
   AdminAiModelStat,
+  AdminAiSpendUser,
   AdminFileTypeStat,
   AdminStatsRange,
   AdminStatsResponse,
@@ -39,14 +41,14 @@ export class AdminStatsService {
             (SELECT COUNT(*) FROM note_versions) as noteVersionsTotal,
             (SELECT COUNT(*) FROM share_links WHERE revoked_at IS NULL AND expires_at > @now) as shareLinksActiveTotal,
             (SELECT COUNT(*) FROM ai_user_settings WHERE enabled = 1) as aiEnabledUsersTotal,
-            (SELECT COUNT(*) FROM ai_user_settings WHERE model IS NOT NULL AND trim(model) != '') as aiSelectedModelsTotal,
-            (SELECT COUNT(DISTINCT provider_name) FROM ai_user_settings) as aiProvidersTotal,
+            (SELECT COUNT(DISTINCT user_id) FROM ai_provider_settings WHERE model IS NOT NULL AND trim(model) != '') as aiSelectedModelsTotal,
+            (SELECT COUNT(DISTINCT provider_name) FROM ai_provider_settings) as aiProvidersTotal,
             (SELECT COUNT(*) FROM ai_provider_models WHERE is_deprecated = 0) as aiSyncedModelsTotal,
             (SELECT COUNT(*) FROM ai_provider_models WHERE is_deprecated = 1) as aiDeprecatedModelsTotal,
             (SELECT COUNT(*) FROM activity_logs WHERE action = 'ai.chat' AND created_at >= @lastDay) as aiChatsLast24h,
             (SELECT COUNT(*) FROM activity_logs WHERE action = 'ai.tool.execute' AND created_at >= @lastDay) as aiToolExecutionsLast24h,
             (SELECT COUNT(DISTINCT COALESCE(user_id, actor_id)) FROM activity_logs WHERE action LIKE 'ai.%' AND COALESCE(user_id, actor_id) IS NOT NULL AND created_at >= @lastDay) as aiActiveUsersLast24h,
-            (SELECT MAX(last_models_sync_at) FROM ai_user_settings) as aiLastModelsSyncAt
+            (SELECT MAX(last_models_sync_at) FROM ai_provider_settings) as aiLastModelsSyncAt
         `,
       )
       .get({
@@ -60,6 +62,7 @@ export class AdminStatsService {
       | 'topStorageUsers'
       | 'topActivityUsers'
       | 'topAiModels'
+      | 'aiMonthlySpendUsers'
       | 'fileTypes'
     >;
 
@@ -70,6 +73,7 @@ export class AdminStatsService {
       topStorageUsers: this.getTopStorageUsers(),
       topActivityUsers: this.getTopActivityUsers(),
       topAiModels: this.getTopAiModels(),
+      aiMonthlySpendUsers: this.getAiMonthlySpendUsers(),
       fileTypes: this.getFileTypes(),
     };
   }
@@ -208,8 +212,8 @@ export class AdminStatsService {
         `
           SELECT
             model,
-            COUNT(*) as usersTotal
-          FROM ai_user_settings
+            COUNT(DISTINCT user_id) as usersTotal
+          FROM ai_provider_settings
           WHERE model IS NOT NULL AND trim(model) != ''
           GROUP BY model
           ORDER BY usersTotal DESC, lower(model) ASC
@@ -217,5 +221,107 @@ export class AdminStatsService {
         `,
       )
       .all() as AdminAiModelStat[];
+  }
+
+  private getAiMonthlySpendUsers(): AdminAiSpendUser[] {
+    const { monthStart, monthEnd } = this.getCurrentMonthRange();
+    const rows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT
+            users.id as userId,
+            users.username,
+            ai_usage_logs.provider_name as providerName,
+            ai_usage_logs.model,
+            COUNT(*) as requests,
+            COALESCE(SUM(ai_usage_logs.input_tokens), 0) as inputTokens,
+            COALESCE(SUM(ai_usage_logs.output_tokens), 0) as outputTokens,
+            MAX(ai_provider_models.input_price_per_1m) as inputPricePer1M,
+            MAX(ai_provider_models.cached_input_price_per_1m) as cachedInputPricePer1M,
+            MAX(ai_provider_models.output_price_per_1m) as outputPricePer1M
+          FROM ai_usage_logs
+          INNER JOIN users ON users.id = ai_usage_logs.user_id
+          LEFT JOIN ai_provider_models
+            ON ai_provider_models.user_id = ai_usage_logs.user_id
+           AND ai_provider_models.provider_name = ai_usage_logs.provider_name
+           AND ai_provider_models.model_id = ai_usage_logs.model
+          WHERE ai_usage_logs.created_at >= @monthStart AND ai_usage_logs.created_at < @monthEnd
+          GROUP BY users.id, ai_usage_logs.provider_name, ai_usage_logs.model
+          ORDER BY users.username ASC, requests DESC, lower(ai_usage_logs.model) ASC
+        `,
+      )
+      .all({ monthStart, monthEnd }) as Array<{
+      userId: number;
+      username: string;
+      providerName: string;
+      model: string;
+      requests: number;
+      inputTokens: number;
+      outputTokens: number;
+      inputPricePer1M: number | null;
+      cachedInputPricePer1M: number | null;
+      outputPricePer1M: number | null;
+    }>;
+    const users = new Map<number, AdminAiSpendUser>();
+
+    for (const row of rows) {
+      const fallbackPricing = getAiModelPricing(row.model);
+      const pricing = {
+        inputPricePer1M: row.inputPricePer1M ?? fallbackPricing.inputPricePer1M,
+        cachedInputPricePer1M: row.cachedInputPricePer1M ?? fallbackPricing.cachedInputPricePer1M,
+        outputPricePer1M: row.outputPricePer1M ?? fallbackPricing.outputPricePer1M,
+      };
+      const costUsd = calculateAiUsageCostUsd(row.inputTokens, row.outputTokens, pricing);
+      const user =
+        users.get(row.userId) ??
+        ({
+          userId: row.userId,
+          username: row.username,
+          requests: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          tokens: 0,
+          knownCostUsd: 0,
+          hasUnknownCost: false,
+          models: [],
+        } satisfies AdminAiSpendUser);
+
+      user.requests += row.requests;
+      user.inputTokens += row.inputTokens;
+      user.outputTokens += row.outputTokens;
+      user.tokens += row.inputTokens + row.outputTokens;
+      if (costUsd === null) {
+        user.hasUnknownCost = true;
+      } else {
+        user.knownCostUsd += costUsd;
+      }
+      user.models.push({
+        providerName: row.providerName,
+        model: row.model,
+        requests: row.requests,
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        tokens: row.inputTokens + row.outputTokens,
+        costUsd,
+      });
+      users.set(row.userId, user);
+    }
+
+    return [...users.values()].sort(
+      (left, right) =>
+        right.knownCostUsd - left.knownCostUsd ||
+        right.tokens - left.tokens ||
+        left.username.localeCompare(right.username),
+    );
+  }
+
+  private getCurrentMonthRange(): { monthStart: string; monthEnd: string } {
+    const start = new Date();
+    start.setUTCDate(1);
+    start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setUTCMonth(end.getUTCMonth() + 1);
+
+    return { monthStart: start.toISOString(), monthEnd: end.toISOString() };
   }
 }

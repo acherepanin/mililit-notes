@@ -55,6 +55,7 @@ export interface AdminStatsResponse {
   topStorageUsers: AdminStorageUser[];
   topActivityUsers: AdminActivityUser[];
   topAiModels: AdminAiModelStat[];
+  aiMonthlySpendUsers: AdminAiSpendUser[];
   fileTypes: AdminFileTypeStat[];
 }
 
@@ -89,4 +90,26 @@ export interface AdminFileTypeStat {
 export interface AdminAiModelStat {
   model: string;
   usersTotal: number;
+}
+
+export interface AdminAiSpendModel {
+  providerName: string;
+  model: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokens: number;
+  costUsd: number | null;
+}
+
+export interface AdminAiSpendUser {
+  userId: number;
+  username: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  tokens: number;
+  knownCostUsd: number;
+  hasUnknownCost: boolean;
+  models: AdminAiSpendModel[];
 }

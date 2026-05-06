@@ -488,7 +488,7 @@ curl -s -X DELETE "$BASE_URL/templates/1" \
 
 ### Export / Import API
 
-Frontend показывает действия `Экспорт JSON` и `Импорт JSON` в разделе `Управление заметками` бокового меню. Экспорт скачивает `.json` файл с активными заметками пользователя, включая `isFavorite`, `isPinned`, `tags`, `parentId` и пользовательские шаблоны; записи из корзины не включаются. Secret/password/token copy fields экспортируются с зашифрованным `data-value` формата `enc:v1:...`; визуальные `********` внутри HTML не используются для восстановления. Импорт принимает JSON-файл такого же формата, валидирует `notes`, восстанавливает теги, избранное, закрепление и связи родитель/дочерняя заметка.
+Frontend показывает действия `Экспорт JSON` и `Импорт JSON` в разделе `Управление заметками` бокового меню. Экспорт скачивает `.json` файл с активными заметками пользователя, включая `isFavorite`, `isPinned`, `tags`, `parentId` и пользовательские шаблоны; записи из корзины не включаются. Secret/password/token поля данных экспортируются с зашифрованным `data-value` формата `enc:v1:...`; визуальные `********` внутри HTML не используются для восстановления. Импорт принимает JSON-файл такого же формата, валидирует `notes`, восстанавливает теги, избранное, закрепление и связи родитель/дочерняя заметка.
 
 ```bash
 curl -s "$BASE_URL/export/json" -H "Authorization: Bearer $TOKEN"
@@ -564,7 +564,7 @@ curl -s "$BASE_URL/notes/1/share-links" \
 curl -s -X POST "$BASE_URL/notes/1/share-links" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"ttlHours":24,"includeSecrets":true}'
+  -d '{"ttlHours":24,"includeSecrets":true,"oneTime":true}'
 
 curl -s "$BASE_URL/share/<token>"
 
@@ -577,19 +577,26 @@ curl -s -X DELETE "$BASE_URL/share-links/1" \
 
 `POST /notes/:id/share-links` returns `url: "/share/<token>"` for copying and opening in browser.
 `includeSecrets: true` keeps secret/password/token values available for copy buttons on the public page while the UI still masks them visually.
+`oneTime: true` creates a single-use link. The first successful `GET /share/<token>` returns the note, increments `accessCount` and immediately revokes the link for future opens.
 `DELETE /share-links/:id` deletes the link immediately. Public API data is still loaded from `GET /share/<token>` under the `/api` prefix.
+
+Share link list responses include `oneTime`, `accessCount`, `maxAccessCount`, `lastAccessedAt` and `revokedAt`, so UI can show whether the link is reusable, already used or manually revoked.
 
 ## AI
 
 AI endpoints работают только для текущего пользователя и не отдают сохраненный API key обратно на frontend.
 Ключ хранится в БД зашифрованным через `AI_CREDENTIALS_ENCRYPTION_KEY`; в ответе есть только `hasApiKey` и безопасная маска `apiKeyHint`.
+Ключ, маска, выбранная модель и состояние синхронизации сохраняются отдельно для каждой пары `providerName` + `baseUrl`.
 
 ### GET `/api/ai/settings`
 
 Возвращает настройки AI, состояние синхронизации моделей и список моделей текущего пользователя.
-В элементах `models[]` дополнительно возвращаются `score`, `speedScore`, `valueScore` и `sortRank`.
+В элементах `models[]` дополнительно возвращаются `score`, `speedScore`, `valueScore`, `sortRank`, `inputPricePer1M`, `cachedInputPricePer1M`, `outputPricePer1M`.
 Frontend использует `score` только для цветовой полоски эффективности без вывода числа, а `sortRank` - для сортировки новых семейств выше старых.
+Поля цены считаются за 1 миллион токенов. Если цена модели неизвестна, backend возвращает `null`, а UI показывает `?`.
 `sortRank` считается на backend из семейства модели и `created` от provider, если provider вернул это поле.
+Поле `providers[]` содержит сохраненные provider-профили без полного API key: `providerName`, `baseUrl`, `model`, `hasApiKey`, `apiKeyHint`, `apiKeyUpdatedAt`, `updatedAt`.
+Поля `allowReadSecrets`, `requireActionConfirmation`, `dailyRequestLimit`, `dailyTokenLimit` управляют доступом Notes AI к секретным значениям полей данных, подтверждением mutation-действий в web-чате и дневными лимитами. `usageToday` возвращает фактическое использование за текущий день: `requests`, `inputTokens`, `outputTokens`, `tokens`.
 
 ```bash
 curl -s "$BASE_URL/ai/settings" \
@@ -598,14 +605,18 @@ curl -s "$BASE_URL/ai/settings" \
 
 ### PATCH `/api/ai/settings`
 
-Сохраняет настройки AI. Поле `apiKey` передается только при создании или замене ключа.
+Сохраняет активный provider, общие AI-настройки пользователя и настройки текущей пары `providerName` + `baseUrl`. Поле `apiKey` передается только при создании или замене ключа.
+Если отправить только `providerName` и `baseUrl`, backend переключит активный provider и вернет ранее сохраненные для него `model`, `hasApiKey` и `apiKeyHint`.
 Чтобы удалить ключ, отправьте `clearApiKey: true`.
+`allowReadSecrets` по умолчанию `false`: без него Notes AI получает замаскированные значения password/token/secret в `currentNote` и readonly tool-результатах.
+`requireActionConfirmation` по умолчанию `true`: mutation-действия возвращаются карточками подтверждения. Если поставить `false`, web-чат выполнит подготовленные Notes AI действия сразу и вернет результаты в `executions[]`.
+`dailyRequestLimit` и `dailyTokenLimit` можно отправить числом или `null`, чтобы снять лимит.
 
 ```bash
 curl -s -X PATCH "$BASE_URL/ai/settings" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"enabled":true,"providerName":"OpenAI-compatible","baseUrl":"https://api.openai.com/v1","model":"gpt-4.1-mini","apiKey":"sk-..."}'
+  -d '{"enabled":true,"allowReadSecrets":false,"requireActionConfirmation":true,"dailyRequestLimit":100,"dailyTokenLimit":200000,"providerName":"OpenAI-compatible","baseUrl":"https://api.openai.com/v1","model":"gpt-4.1-mini","apiKey":"sk-..."}'
 ```
 
 Удаление ключа:
@@ -622,15 +633,59 @@ Validation:
 - `baseUrl` должен быть валидным HTTPS URL;
 - `providerName`: optional string до 80 символов;
 - `model`: optional string до 180 символов или `null`;
-- `apiKey`: optional string до 3000 символов.
+- `apiKey`: optional string до 3000 символов;
+- `allowReadSecrets`: optional boolean;
+- `requireActionConfirmation`: optional boolean;
+- `dailyRequestLimit`: optional integer от 1 до 10000 или `null`;
+- `dailyTokenLimit`: optional integer от 1000 до 100000000 или `null`.
 
 ### POST `/api/ai/models/sync`
 
 Синхронизирует список моделей через OpenAI-compatible endpoint `GET <baseUrl>/models`.
 Модели, которые провайдер больше не возвращает, помечаются как устаревшие.
+Та же синхронизация автоматически запускается backend раз в 24 часа для активных пользователей Notes AI, у которых есть сохраненный API key.
+Метаданные качества, сортировки и цены берутся из локального `ai_model_catalog`: сначала из builtin seed, затем из удаленного справочника, если задан `AI_MODEL_CATALOG_URL`.
 
 ```bash
 curl -s -X POST "$BASE_URL/ai/models/sync" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### POST `/api/ai/models/catalog/sync`
+
+Admin-only endpoint. Принудительно обновляет локальный `ai_model_catalog` из URL, заданного в env `AI_MODEL_CATALOG_URL`.
+Если переменная не задана, endpoint успешно завершается без изменений. Endpoint не ходит к пользовательскому provider API и не требует API key пользователя.
+
+Поддерживаемый remote JSON:
+
+```json
+{
+  "models": [
+    {
+      "id": "gpt-5.5",
+      "label": "GPT-5.5",
+      "tier": "paid",
+      "quality": "high",
+      "speed": "medium",
+      "cost": "high",
+      "score": 99,
+      "speedScore": 62,
+      "valueScore": 54,
+      "sortRank": 5500,
+      "inputPricePer1M": 0,
+      "cachedInputPricePer1M": 0,
+      "outputPricePer1M": 0,
+      "capabilities": ["chat"],
+      "deprecated": false
+    }
+  ]
+}
+```
+
+Также допускается массив моделей без обертки `{ "models": [...] }`.
+
+```bash
+curl -s -X POST "$BASE_URL/ai/models/catalog/sync" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -643,22 +698,66 @@ curl -s -X POST "$BASE_URL/ai/test-connection" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
+### GET `/api/ai/usage/monthly`
+
+Возвращает месячную статистику Notes AI текущего пользователя за текущий календарный месяц UTC: запросы, input/output tokens, общую известную стоимость и разбивку по моделям.
+Стоимость считается по цене за 1 миллион токенов. Если для модели нет цены, `costUsd` будет `null`, `hasUnknownCost` станет `true`, а UI покажет `?`.
+
+Response `200`:
+
+```json
+{
+  "monthStart": "2026-05-01T00:00:00.000Z",
+  "monthEnd": "2026-06-01T00:00:00.000Z",
+  "requests": 12,
+  "inputTokens": 18000,
+  "outputTokens": 4200,
+  "tokens": 22200,
+  "knownCostUsd": 0.216,
+  "hasUnknownCost": false,
+  "models": [
+    {
+      "providerName": "OpenAI",
+      "model": "gpt-5.5",
+      "requests": 12,
+      "inputTokens": 18000,
+      "outputTokens": 4200,
+      "tokens": 22200,
+      "costUsd": 0.216,
+      "inputPricePer1M": 5,
+      "cachedInputPricePer1M": 0.5,
+      "outputPricePer1M": 30
+    }
+  ]
+}
+```
+
+```bash
+curl -s "$BASE_URL/ai/usage/monthly" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
 ### POST `/api/ai/chat`
 
 Отправляет сообщение в выбранную модель через OpenAI-compatible endpoint `POST <baseUrl>/chat/completions`.
-AI может вернуть текстовый ответ или список действий `actions[]`. Readonly tool-calls выполняются сразу, а любые изменения заметок, тегов, шаблонов, версий или share links возвращаются как preview и требуют подтверждения через `POST /api/ai/actions/execute`.
+AI может вернуть текстовый ответ, список действий `actions[]` или результаты автоматического выполнения `executions[]`. Readonly tool-calls выполняются сразу. Если `requireActionConfirmation=true`, любые изменения заметок, тегов, шаблонов, версий или share links возвращаются как preview и требуют подтверждения через `POST /api/ai/actions/execute`. Если `requireActionConfirmation=false`, backend сразу выполняет mutation-действия web-чата и возвращает результаты в `executions[]`; если конкретное действие не удалось выполнить, текст ошибки возвращается в `message.content`, а сам `/api/ai/chat` не должен падать из-за одного неудачного auto-action.
 Запрос может содержать `currentNote`, чтобы backend и модель знали текущую выбранную заметку для команд вроде “измени текущую заметку” или “напиши текст в уже созданной заметке”.
-Developer prompt описывает доступные инструменты, схему заметок, формат `contentHtml/contentText`, правила форматирования, copy/secret fields и порядок работы с поиском/чтением/редактированием.
+Developer prompt описывает доступные инструменты, схему заметок, формат `contentHtml/contentText`, правила форматирования, поля данных и порядок работы с поиском/чтением/редактированием.
+
+Tool payload для действий с заметкой должен использовать `noteId`. Backend дополнительно принимает `id` и числовую строку как защиту от некорректного provider tool-call, но новые сценарии и документация должны использовать только `noteId`.
 Если передан `currentNote`, prompt включает `id`, `name`, `contentText` и `contentHtml` текущей заметки с ограничением размера.
 Frontend передает в `currentNote` актуальный draft редактора, поэтому AI-команды могут использовать текст, который пользователь уже набрал, но еще не сохранил вручную.
 AI chat работает по LLM-first схеме: backend не перехватывает команды редактирования заметок до модели. Выбранная модель получает developer prompt, `currentNote`, историю и запрос пользователя, после чего сама должна вернуть нужный tool-call.
-`currentNote` включает `id`, `name`, `contentHtml`, `contentText`. `contentHtml` нужен, чтобы команды добавления логина/пароля могли дописать secret/copy-поля к существующему содержимому заметки.
+`currentNote` включает `id`, `name`, `contentHtml`, `contentText`. `contentHtml` нужен, чтобы команды добавления логина/пароля могли дописать поля данных к существующему содержимому заметки.
 Если `currentNote` не передан, но команда явно указывает имя заметки, модель должна использовать `notes.search`, затем `notes.read`, и только после этого возвращать mutation tool-call.
-Команды преобразования вроде “перенеси данные в секретные поля” используют `currentNote.contentText` и `currentNote.contentHtml`: модель сама извлекает значения из текста, например из строки `Логин - test, пароль - test12`, удаляет открытый текст с этими значениями и возвращает `notes.update` с copy/secret-полями.
-Одиночные подтверждения текстом (`да`, `ок`, `yes`) не выполняют tool-call. Пользователь подтверждает мутации только кнопкой в карточке действия.
+Команды преобразования вроде “перенеси данные в секретные поля” используют `currentNote.contentText` и `currentNote.contentHtml`: модель сама извлекает значения из текста, например из строки `Логин - test, пароль - test12`, удаляет открытый текст с этими значениями и возвращает `notes.update` с полями данных.
+Одиночные подтверждения текстом (`да`, `ок`, `yes`) не выполняют tool-call. При включенном `requireActionConfirmation` пользователь подтверждает мутации только кнопкой в карточке действия.
 Backend не передает `temperature` в запрос чата, чтобы не ломать GPT-5/reasoning модели, которые могут не поддерживать sampling-параметры в выбранном режиме.
 Служебная инструкция отправляется как `developer` message, что совместимо с новыми OpenAI моделями в Chat Completions.
 Если provider возвращает ошибку, backend прокидывает короткий текст причины в 400-ответ.
+Readonly и mutation tool-вызовы пишутся в `ai_audit_logs` без сырого payload: сохраняются имя tool, режим, `noteId`, если он есть, и список ключей payload.
+Перед запросом backend проверяет дневные лимиты `dailyRequestLimit` и `dailyTokenLimit`. После ответа записывает `ai_usage_logs` с provider, model, input/output tokens. Если provider вернул `usage`, используются его значения; иначе применяется приблизительная оценка по длине текста.
+Если `allowReadSecrets=false`, backend перед отправкой в модель маскирует secret/password/token значения в `currentNote`, `notes.read`, `notes.search`, `notes.semanticSearch`, `versions.list` и `templates.list`.
 
 ```bash
 curl -s -X POST "$BASE_URL/ai/chat" \
@@ -718,22 +817,168 @@ curl -s -X POST "$BASE_URL/ai/actions/execute" \
 Поддержанные действия:
 
 - `notes.search`;
+- `notes.semanticSearch`;
 - `notes.read`;
 - `notes.create`;
+- `notes.createNestedBatch`;
 - `notes.update`;
 - `notes.tags.set`;
+- `notes.autotag`;
 - `notes.favorite.set`;
 - `notes.pinned.set`;
 - `notes.delete`;
+- `notes.deleteAll`;
 - `notes.restore`;
 - `templates.list`;
 - `templates.createNote`;
 - `versions.list`;
 - `versions.restore`;
 - `attachments.list`;
-- `shareLinks.create`.
+- `attachments.attachToNote`;
+- `shareLinks.create`;
+- `admin.users.list`, только для роли `admin`;
+- `admin.stats.read`, только для роли `admin`.
 
 Readonly `notes.read` возвращает модели не только метаданные, но и `contentText` заметки до 6000 символов, чтобы следующие ответы и мутации могли опираться на фактическое содержимое.
+Readonly `notes.semanticSearch` принимает `query` и optional `limit`, строит embeddings через текущий provider `POST <baseUrl>/embeddings`, кэширует векторы в SQLite и возвращает результаты с `score`/`matchType`. Если provider не поддерживает embeddings или вернул ошибку, backend возвращает fallback-результаты обычного `notes.search`.
+Mutation `notes.create` принимает optional `parentId`. Если `parentId` передан, заметка создается дочерней внутри существующей заметки текущего пользователя. Родительская заметка может одновременно хранить собственный текст и иметь дочерние заметки; отдельной сущности “папка” нет.
+Mutation `notes.createNestedBatch` создает повторяемую вложенную структуру в одном действии. Payload: `scope` (`allActiveNotes`, `parentIds` или `recentNamedNotes`), `parentIds` для точечного режима, `parentNames`/`expectedParentCount`/`recentWithinMinutes` для выбора последних созданных заметок по имени, `childCount`, `nestedChildCount`, optional `childNamePattern`/`nestedNamePattern` с плейсхолдерами `{index}` и `{parent}`. Для `allActiveNotes` backend берет снимок активных заметок до создания новых записей, поэтому новые дочерние заметки не становятся родителями в том же batch. Для продолжения предыдущего batch вида “внутри каждой из новых двух заметок” Notes AI использует `recentNamedNotes`, например `parentNames=["Вложение 1","Вложение 2"]` и `expectedParentCount=20`.
+Mutation `attachments.attachToNote` принимает `attachmentId` и optional `noteId`: если `noteId` передан, существующий файл аккаунта привязывается к заметке текущего пользователя; если `noteId` опущен или `null`, файл отвязывается от заметок. Backend проверяет ownership файла и заметки через `WorkspaceService`.
+Mutation `notes.deleteAll` принимает `{"scope":"all"}` и переносит все активные заметки текущего пользователя в корзину. Это не окончательное удаление и не удаляет физические файлы аккаунта.
+Readonly `admin.users.list` и `admin.stats.read` дополнительно проверяют backend-роль пользователя. Пользователь без роли `admin` получает отказ независимо от того, сгенерировала ли модель такой tool-call.
+
+### GET `/api/ai/bots/admin-settings`
+
+Admin-only endpoint. Возвращает глобальные настройки общих Telegram/VK ботов приложения.
+Секретные значения не возвращаются: доступны только флаги `hasBotToken`, `hasAccessToken`, `hasSecret` и маски `botTokenHint`, `accessTokenHint`, `secretHint`.
+
+```bash
+curl -s "$BASE_URL/ai/bots/admin-settings" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### PATCH `/api/ai/bots/admin-settings/:provider`
+
+Admin-only endpoint. Сохраняет настройки общего бота, где `provider` равен `telegram` или `vk`.
+Telegram использует `botToken`, optional `secret` для webhook secret header и `webhookUrl`. VK использует `groupId`, `accessToken`, `secret`, `confirmationCode` и `webhookUrl`.
+`allowSecrets` и `requireConfirmation` задают глобальную политику безопасности бота.
+`dailyRequestLimit`, `dailyReadLimit`, `dailyWriteLimit` задают глобальные дневные лимиты сообщений, readonly-tool вызовов и mutation-действий. Каждый лимит можно передать числом от 1 до 10000 или `null`, чтобы снять ограничение.
+
+```bash
+curl -s -X PATCH "$BASE_URL/ai/bots/admin-settings/telegram" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"webhookUrl":"https://example.com/api/ai/bots/telegram/webhook","botToken":"123:secret","secret":"webhook-secret","requireConfirmation":true,"allowSecrets":false,"dailyRequestLimit":100,"dailyReadLimit":200,"dailyWriteLimit":25}'
+```
+
+### POST `/api/ai/bots/admin-settings/:provider/test`
+
+Admin-only endpoint. Проверяет подключение к Telegram или VK по сохраненным настройкам.
+Для Telegram вызывается `getMe`, для VK проверяется `groups.getById`.
+Результат проверки сохраняется в `lastCheckAt`, `lastCheckStatus`, `lastCheckError`.
+
+```bash
+curl -s -X POST "$BASE_URL/ai/bots/admin-settings/telegram/test" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### GET `/api/ai/bots/me`
+
+Возвращает пользовательские настройки Telegram/VK-привязки и разрешений.
+
+```bash
+curl -s "$BASE_URL/ai/bots/me" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Ответ содержит `permissions`:
+
+```json
+{
+  "provider": "telegram",
+  "enabled": true,
+  "accessMode": "write",
+  "allowSecrets": false,
+  "permissions": {
+    "readNotes": true,
+    "writeNotes": true,
+    "deleteNotes": false,
+    "manageTags": true,
+    "useTemplates": false,
+    "useVersions": false,
+    "listAttachments": true,
+    "createShareLinks": false
+  },
+  "dailyRequestLimit": null,
+  "dailyReadLimit": null,
+  "dailyWriteLimit": null,
+  "linkedExternalId": "123",
+  "linkedUsername": "user",
+  "linkedAt": "2026-05-05T10:30:00.000Z"
+}
+```
+
+### PATCH `/api/ai/bots/me/:provider`
+
+Обновляет пользовательскую политику доступа бота к личным данным: `enabled`, `accessMode`, `allowSecrets`, `permissions`, `dailyRequestLimit`, `dailyReadLimit`, `dailyWriteLimit`.
+Полноценная привязка внешнего аккаунта выполняется через одноразовый код.
+`permissions` можно передавать частично: backend сохранит только переданные флаги и не доверяет frontend при выполнении команд.
+
+```bash
+curl -s -X PATCH "$BASE_URL/ai/bots/me/telegram" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"accessMode":"write","allowSecrets":false,"dailyRequestLimit":50,"dailyReadLimit":120,"dailyWriteLimit":20,"permissions":{"readNotes":true,"writeNotes":true,"deleteNotes":false,"listAttachments":true}}'
+```
+
+### POST `/api/ai/bots/link-code`
+
+Создает одноразовый код привязки Telegram/VK аккаунта к текущему пользователю.
+Код действует 10 минут, имеет формат `XXXX-XXXX-XXXX-XXXX-XXXX`, в БД хранится только hash. При генерации нового кода старые коды этого пользователя для выбранного provider удаляются. Backend дополнительно проверяет, что активного кода с таким hash у provider нет. Старый короткий формат кодов не принимается.
+
+```bash
+curl -s -X POST "$BASE_URL/ai/bots/link-code" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"telegram"}'
+```
+
+### POST `/api/ai/bots/telegram/webhook`
+
+Публичный webhook endpoint для Telegram. Auth token приложения не нужен: доступ ограничивается включенным admin-настройками бота, сохраненным bot token и optional `X-Telegram-Bot-Api-Secret-Token`, если `secret` задан в настройках Telegram-интеграции.
+
+Поведение:
+
+- сообщение с одноразовым кодом привязывает Telegram user id к пользователю приложения;
+- непривязанный аккаунт получает короткую инструкцию создать код в настройках Notes AI;
+- привязанный аккаунт отправляет текст в тот же Notes AI pipeline, что и UI-чат;
+- если привязанный аккаунт отправляет voice/audio message без текста, backend скачивает аудио во временный memory-buffer, проверяет лимит 25 MB, распознает его через активный AI provider пользователя (`/audio/transcriptions`, модель `AI_TRANSCRIPTION_MODEL`, default `whisper-1`) и отправляет расшифровку в тот же Notes AI pipeline;
+- Notes AI получает только те tools, которые разрешены матрицей `permissions`; при включенном праве чтения доступны `notes.search`, `notes.semanticSearch` и `notes.read`;
+- при включенном доступе к файлам доступны `attachments.list`, а в режиме изменений дополнительно `attachments.attachToNote`;
+- для привязанного пользователя с ролью `admin` доступны readonly tools `admin.users.list` и `admin.stats.read`;
+- runtime пишет `ai_bot_usage_logs` и проверяет раздельные дневные лимиты: `message` для входящих сообщений, `read` для readonly-tool вызовов, `write` для подтвержденных или автоматически выполненных mutation-действий;
+- mutation tools требуют `accessMode: "write"` и соответствующий permission-флаг; если включено подтверждение, действие сохраняется как pending action на 10 минут;
+- перед выполнением pending action backend повторно проверяет актуальные permissions, поэтому действие не выполнится, если право было выключено после создания preview;
+- подтверждение в чате: `подтвердить` или `подтвердить <id>`.
+
+```bash
+curl -s -X POST "$BASE_URL/ai/bots/telegram/webhook" \
+  -H "Content-Type: application/json" \
+  -H "X-Telegram-Bot-Api-Secret-Token: webhook-secret" \
+  -d '{"message":{"chat":{"id":123},"from":{"id":123,"username":"user"},"text":"найди заметки про sqlite"}}'
+```
+
+### POST `/api/ai/bots/vk/webhook`
+
+Публичный webhook endpoint для VK Callback API. Для `confirmation` возвращает `confirmationCode`, для `message_new` проверяет `secret` и `group_id`, если они заданы в admin-настройках.
+
+Поведение привязки, выполнения команд и подтверждения действий совпадает с Telegram runtime.
+
+```bash
+curl -s -X POST "$BASE_URL/ai/bots/vk/webhook" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"message_new","group_id":123,"secret":"secret","object":{"message":{"from_id":456,"peer_id":456,"text":"найди заметки про деплой"}}}'
+```
 
 ## Admin
 
@@ -883,8 +1128,9 @@ Query `range` управляет графиком активности:
 - `month` - последние 30 дней по дням;
 - `year` - последние 12 месяцев по месяцам.
 
-Ответ включает общие счетчики, файловое хранилище, отвязанные от заметок файлы, активные публичные ссылки, LLM/Notes AI агрегаты, активность за выбранный период, топ пользователей по объему файлов, топ пользователей по действиям и топ выбранных LLM-моделей.
+Ответ включает общие счетчики, файловое хранилище, отвязанные от заметок файлы, активные публичные ссылки, LLM/Notes AI агрегаты, активность за выбранный период, топ пользователей по объему файлов, топ пользователей по действиям, топ выбранных LLM-моделей и месячные расходы Notes AI по каждому пользователю.
 В `topActivityUsers.username` используется пользователь-цель события, затем инициатор события, а для удаленных пользователей возвращается `unknown`.
+В `aiMonthlySpendUsers[]` стоимость считается по моделям за текущий календарный месяц UTC. Если цена модели неизвестна, `costUsd` будет `null`, а сумма пользователя выводится как известная часть `knownCostUsd` плюс признак `hasUnknownCost`.
 
 Response `200`:
 
@@ -943,6 +1189,29 @@ Response `200`:
     {
       "model": "gpt-5.5",
       "usersTotal": 1
+    }
+  ],
+  "aiMonthlySpendUsers": [
+    {
+      "userId": 1,
+      "username": "admin",
+      "requests": 12,
+      "inputTokens": 18000,
+      "outputTokens": 4200,
+      "tokens": 22200,
+      "knownCostUsd": 0.216,
+      "hasUnknownCost": false,
+      "models": [
+        {
+          "providerName": "OpenAI",
+          "model": "gpt-5.5",
+          "requests": 12,
+          "inputTokens": 18000,
+          "outputTokens": 4200,
+          "tokens": 22200,
+          "costUsd": 0.216
+        }
+      ]
     }
   ],
   "fileTypes": [

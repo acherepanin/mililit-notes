@@ -11,5 +11,6 @@ import { AdminService } from './admin.service';
   imports: [ActivityModule, AuthModule, DatabaseModule],
   controllers: [AdminController],
   providers: [AdminService, AdminStatsService],
+  exports: [AdminService],
 })
 export class AdminModule {}

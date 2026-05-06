@@ -85,6 +85,8 @@ interface ShareLinkRecord {
   public_url: string | null;
   expires_at: string;
   include_secrets: 0 | 1;
+  max_access_count: number | null;
+  access_count: number;
   revoked_at: string | null;
   created_at: string;
   last_accessed_at: string | null;
@@ -206,70 +208,76 @@ export class WorkspaceService {
         `,
       )
       .all({ userId }) as NoteRecord[];
+    const tagsByNote = this.getExportTagsByNote(rows.map((row) => row.id));
+
     return {
       exportedAt: new Date().toISOString(),
-      notes: rows.map((row) => mapNote(row, this.getExportTags(row.id))),
+      notes: rows.map((row) => mapNote(row, tagsByNote.get(row.id) ?? [])),
       templates: this.listExportTemplates(userId),
     };
   }
 
   importJson(userId: number, dto: ImportNotesDto): { imported: number } {
     const notes = this.normalizeImportNotes(dto.notes);
-    const idMap = new Map<number, number>();
-    let imported = 0;
+    const transaction = this.databaseService.connection.transaction(() => {
+      const idMap = new Map<number, number>();
+      let imported = 0;
 
-    for (const note of notes) {
-      const created = this.notesService.create(userId, {
-        name: note.name,
-        parentId: null,
-      } satisfies CreateNoteDto);
-      this.notesService.update(userId, created.id, {
-        contentHtml: note.contentHtml,
-        contentText: note.contentText,
-        isFavorite: note.isFavorite,
-        isPinned: note.isPinned,
-      });
+      for (const note of notes) {
+        const created = this.notesService.create(userId, {
+          name: note.name,
+          parentId: null,
+        } satisfies CreateNoteDto);
+        this.notesService.update(userId, created.id, {
+          contentHtml: note.contentHtml,
+          contentText: note.contentText,
+          isFavorite: note.isFavorite,
+          isPinned: note.isPinned,
+        });
 
-      for (const tag of note.tags) {
-        this.notesService.createTag(userId, tag);
-      }
-      if (note.tags.length > 0) {
-        this.notesService.updateTags(userId, created.id, note.tags);
-      }
+        for (const tag of note.tags) {
+          this.notesService.createTag(userId, tag);
+        }
+        if (note.tags.length > 0) {
+          this.notesService.updateTags(userId, created.id, note.tags);
+        }
 
-      if (note.id !== null) {
-        idMap.set(note.id, created.id);
-      }
-      imported += 1;
-    }
-
-    for (const note of notes) {
-      if (note.id === null || note.parentId === null) {
-        continue;
+        if (note.id !== null) {
+          idMap.set(note.id, created.id);
+        }
+        imported += 1;
       }
 
-      const nextId = idMap.get(note.id);
-      const nextParentId = idMap.get(note.parentId);
-      if (nextId && nextParentId && nextId !== nextParentId) {
-        this.notesService.move(userId, nextId, { parentId: nextParentId });
+      for (const note of notes) {
+        if (note.id === null || note.parentId === null) {
+          continue;
+        }
+
+        const nextId = idMap.get(note.id);
+        const nextParentId = idMap.get(note.parentId);
+        if (nextId && nextParentId && nextId !== nextParentId) {
+          this.notesService.move(userId, nextId, { parentId: nextParentId });
+        }
       }
-    }
 
-    const templates = Array.isArray(dto.templates) ? dto.templates : [];
-    for (const rawTemplate of templates) {
-      if (!rawTemplate || typeof rawTemplate !== 'object') {
-        continue;
+      const templates = Array.isArray(dto.templates) ? dto.templates : [];
+      for (const rawTemplate of templates) {
+        if (!rawTemplate || typeof rawTemplate !== 'object') {
+          continue;
+        }
+
+        const template = rawTemplate as Record<string, unknown>;
+        this.createTemplate(userId, {
+          name: this.normalizeImportName(template.name),
+          contentHtml: this.readString(template.contentHtml),
+          contentText: this.readString(template.contentText),
+        });
       }
 
-      const template = rawTemplate as Record<string, unknown>;
-      this.createTemplate(userId, {
-        name: this.normalizeImportName(template.name),
-        contentHtml: this.readString(template.contentHtml),
-        contentText: this.readString(template.contentText),
-      });
-    }
+      return { imported };
+    });
 
-    return { imported };
+    return transaction();
   }
 
   uploadAttachment(userId: number, dto: UploadAttachmentDto): AttachmentResponse {
@@ -461,8 +469,10 @@ export class WorkspaceService {
     const result = this.databaseService.connection
       .prepare(
         `
-          INSERT INTO share_links (note_id, user_id, token_hash, public_url, expires_at, include_secrets, created_at)
-          VALUES (@noteId, @userId, @tokenHash, @publicUrl, @expiresAt, @includeSecrets, @createdAt)
+          INSERT INTO share_links
+            (note_id, user_id, token_hash, public_url, expires_at, include_secrets, max_access_count, created_at)
+          VALUES
+            (@noteId, @userId, @tokenHash, @publicUrl, @expiresAt, @includeSecrets, @maxAccessCount, @createdAt)
         `,
       )
       .run({
@@ -472,6 +482,7 @@ export class WorkspaceService {
         publicUrl,
         expiresAt,
         includeSecrets: dto.includeSecrets ? 1 : 0,
+        maxAccessCount: dto.oneTime ? 1 : null,
         createdAt: now.toISOString(),
       });
     return {
@@ -500,13 +511,30 @@ export class WorkspaceService {
     const row = this.databaseService.connection
       .prepare('SELECT * FROM share_links WHERE token_hash = @tokenHash')
       .get({ tokenHash }) as ShareLinkRecord | undefined;
-    if (!row || row.revoked_at || Date.parse(row.expires_at) < Date.now()) {
+    const accessLimitReached = row
+      ? row.max_access_count !== null && row.access_count >= row.max_access_count
+      : false;
+
+    if (!row || row.revoked_at || Date.parse(row.expires_at) < Date.now() || accessLimitReached) {
       throw new NotFoundException('Share link was not found');
     }
 
+    const accessedAt = new Date().toISOString();
+    const nextAccessCount = row.access_count + 1;
     this.databaseService.connection
-      .prepare('UPDATE share_links SET last_accessed_at = @now WHERE id = @id')
-      .run({ id: row.id, now: new Date().toISOString() });
+      .prepare(
+        `
+          UPDATE share_links
+          SET last_accessed_at = @accessedAt,
+              access_count = @accessCount,
+              revoked_at = CASE
+                WHEN max_access_count IS NOT NULL AND @accessCount >= max_access_count THEN @accessedAt
+                ELSE revoked_at
+              END
+          WHERE id = @id
+        `,
+      )
+      .run({ id: row.id, accessedAt, accessCount: nextAccessCount });
     this.databaseService.connection
       .prepare(
         `
@@ -514,7 +542,7 @@ export class WorkspaceService {
           VALUES (@shareLinkId, @userAgent, @ipAddress, @accessedAt)
         `,
       )
-      .run({ shareLinkId: row.id, userAgent, ipAddress, accessedAt: new Date().toISOString() });
+      .run({ shareLinkId: row.id, userAgent, ipAddress, accessedAt });
 
     const note = this.notesService.getById(row.user_id, row.note_id);
     return {
@@ -589,20 +617,32 @@ export class WorkspaceService {
     }));
   }
 
-  private getExportTags(noteId: number): string[] {
+  private getExportTagsByNote(noteIds: number[]): Map<number, string[]> {
+    const tagsByNote = new Map<number, string[]>();
+    if (noteIds.length === 0) {
+      return tagsByNote;
+    }
+
+    const noteIdList = bindSqlList('noteId', noteIds);
     const rows = this.databaseService.connection
       .prepare(
         `
-          SELECT lower(tags.name) as name
+          SELECT note_tags.note_id as noteId, lower(tags.name) as name
           FROM note_tags
           JOIN tags ON tags.id = note_tags.tag_id
-          WHERE note_tags.note_id = @noteId
-          ORDER BY lower(tags.name)
+          WHERE note_tags.note_id IN (${noteIdList.placeholders})
+          ORDER BY note_tags.note_id, lower(tags.name)
         `,
       )
-      .all({ noteId }) as Array<{ name: string }>;
+      .all(noteIdList.params) as Array<{ noteId: number; name: string }>;
 
-    return rows.map((row) => row.name);
+    for (const row of rows) {
+      const tags = tagsByNote.get(row.noteId) ?? [];
+      tags.push(row.name);
+      tagsByNote.set(row.noteId, tags);
+    }
+
+    return tagsByNote;
   }
 
   private normalizeImportNotes(notes: Array<Record<string, unknown>>): ImportableNote[] {
@@ -838,6 +878,9 @@ export class WorkspaceService {
       url: row.public_url ?? '',
       expiresAt: row.expires_at,
       includeSecrets: row.include_secrets === 1,
+      oneTime: row.max_access_count === 1,
+      accessCount: row.access_count,
+      maxAccessCount: row.max_access_count,
       revokedAt: row.revoked_at,
       createdAt: row.created_at,
       lastAccessedAt: row.last_accessed_at,

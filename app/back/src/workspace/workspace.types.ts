@@ -32,6 +32,9 @@ export interface ShareLinkResponse {
   url: string;
   expiresAt: string;
   includeSecrets: boolean;
+  oneTime: boolean;
+  accessCount: number;
+  maxAccessCount: number | null;
   revokedAt: string | null;
   createdAt: string;
   lastAccessedAt: string | null;

@@ -22,11 +22,16 @@ export default defineConfig({
           }
 
           if (
-            normalizedId.includes('/node_modules/@tiptap/') ||
-            normalizedId.includes('/node_modules/prosemirror-') ||
-            normalizedId.includes('/node_modules/prosemirror/') ||
             normalizedId.includes('/node_modules/lowlight/') ||
             normalizedId.includes('/node_modules/highlight.js/')
+          ) {
+            return 'code-vendor';
+          }
+
+          if (
+            normalizedId.includes('/node_modules/@tiptap/') ||
+            normalizedId.includes('/node_modules/prosemirror-') ||
+            normalizedId.includes('/node_modules/prosemirror/')
           ) {
             return 'editor-vendor';
           }

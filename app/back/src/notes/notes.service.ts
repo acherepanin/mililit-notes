@@ -19,6 +19,19 @@ import type {
 import { SecretFieldCryptoService } from './secret-field-crypto.service';
 
 const MAX_NOTE_VERSIONS = 80;
+const MAX_BATCH_CREATED_NOTES = 300;
+
+interface CreateNestedBatchOptions {
+  parentIds?: number[];
+  parentScope: 'allActiveNotes' | 'parentIds' | 'recentNamedNotes';
+  parentNames?: string[];
+  expectedParentCount?: number | null;
+  recentWithinMinutes?: number | null;
+  childCount: number;
+  nestedChildCount: number;
+  childNamePattern?: string;
+  nestedNamePattern?: string;
+}
 
 @Injectable()
 export class NotesService {
@@ -113,6 +126,65 @@ export class NotesService {
     });
 
     return note;
+  }
+
+  createNestedBatch(
+    userId: number,
+    options: CreateNestedBatchOptions,
+  ): {
+    parentCount: number;
+    createdCount: number;
+    createdIds: number[];
+    directChildIds: number[];
+    nestedChildIds: number[];
+  } {
+    const parents = this.resolveBatchParents(userId, options);
+    const totalCount = parents.length * options.childCount * (1 + options.nestedChildCount);
+
+    if (totalCount > MAX_BATCH_CREATED_NOTES) {
+      throw new BadRequestException(
+        `Batch would create ${totalCount} notes, maximum is ${MAX_BATCH_CREATED_NOTES}`,
+      );
+    }
+
+    const createdIds: number[] = [];
+    const directChildIds: number[] = [];
+    const nestedChildIds: number[] = [];
+    for (const parent of parents) {
+      for (let childIndex = 1; childIndex <= options.childCount; childIndex += 1) {
+        const child = this.create(userId, {
+          name: this.formatBatchNoteName(
+            options.childNamePattern ?? 'Вложение {index}',
+            childIndex,
+            parent.name,
+          ),
+          parentId: parent.id,
+        });
+        createdIds.push(child.id);
+        directChildIds.push(child.id);
+
+        for (let nestedIndex = 1; nestedIndex <= options.nestedChildCount; nestedIndex += 1) {
+          const nested = this.create(userId, {
+            name: this.formatBatchNoteName(
+              options.nestedNamePattern ?? 'Вложенная заметка {index}',
+              nestedIndex,
+              child.name,
+            ),
+            parentId: child.id,
+          });
+          createdIds.push(nested.id);
+          nestedChildIds.push(nested.id);
+        }
+      }
+    }
+
+    return {
+      parentCount: parents.length,
+      createdCount: createdIds.length,
+      createdIds,
+      directChildIds,
+      nestedChildIds,
+    };
   }
 
   update(userId: number, id: number, dto: UpdateNoteDto): NoteResponse {
@@ -238,6 +310,47 @@ export class NotesService {
     });
 
     return { id };
+  }
+
+  deleteAll(userId: number): { deletedCount: number } {
+    const rows = this.databaseService.connection
+      .prepare('SELECT id FROM notes WHERE user_id = @userId AND deleted_at IS NULL')
+      .all({ userId }) as Array<{ id: number }>;
+    const noteIds = rows.map((row) => row.id);
+
+    if (noteIds.length === 0) {
+      return { deletedCount: 0 };
+    }
+
+    const deletedAt = new Date().toISOString();
+    const noteIdList = bindSqlList('noteId', noteIds);
+    const transaction = this.databaseService.connection.transaction(() => {
+      this.deleteVersions(userId, noteIds);
+      this.databaseService.connection
+        .prepare(
+          `
+            UPDATE notes
+            SET deleted_at = @deletedAt, deleted_by = @userId, updated_at = @deletedAt
+            WHERE id IN (${noteIdList.placeholders}) AND user_id = @userId
+          `,
+        )
+        .run({ ...noteIdList.params, userId, deletedAt });
+      this.databaseService.connection
+        .prepare(`DELETE FROM note_fts WHERE note_id IN (${noteIdList.placeholders})`)
+        .run(noteIdList.params);
+    });
+
+    transaction();
+    this.activityService.record({
+      actorId: userId,
+      userId,
+      action: 'notes.delete_all',
+      targetType: 'note',
+      targetId: userId,
+      details: { count: noteIds.length },
+    });
+
+    return { deletedCount: noteIds.length };
   }
 
   listTrash(userId: number): NoteResponse[] {
@@ -678,6 +791,124 @@ export class NotesService {
         `DELETE FROM note_versions WHERE note_id IN (${noteIdList.placeholders}) AND user_id = @userId`,
       )
       .run({ ...noteIdList.params, userId });
+  }
+
+  private listActiveParentSnapshot(userId: number): Array<{ id: number; name: string }> {
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, name
+          FROM notes
+          WHERE user_id = @userId AND deleted_at IS NULL
+          ORDER BY id ASC
+        `,
+      )
+      .all({ userId }) as Array<{ id: number; name: string }>;
+  }
+
+  private listParentSnapshot(
+    userId: number,
+    parentIds: number[],
+  ): Array<{ id: number; name: string }> {
+    const ids = [...new Set(parentIds)];
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const idList = bindSqlList('parentId', ids);
+    const rows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, name
+          FROM notes
+          WHERE user_id = @userId
+            AND deleted_at IS NULL
+            AND id IN (${idList.placeholders})
+          ORDER BY id ASC
+        `,
+      )
+      .all({ ...idList.params, userId }) as Array<{ id: number; name: string }>;
+
+    if (rows.length !== ids.length) {
+      throw new NotFoundException('One or more parent notes were not found');
+    }
+
+    return rows;
+  }
+
+  private listRecentNamedParentSnapshot(
+    userId: number,
+    parentNames: string[],
+    expectedParentCount: number | null | undefined,
+    recentWithinMinutes: number | null | undefined,
+  ): Array<{ id: number; name: string }> {
+    const normalizedNames = [
+      ...new Set(parentNames.map((name) => name.trim().toLowerCase()).filter(Boolean)),
+    ];
+    if (normalizedNames.length === 0) {
+      throw new BadRequestException('parentNames are required when scope is recentNamedNotes');
+    }
+
+    const expectedCount = expectedParentCount ?? 100;
+    const names = bindSqlList('parentName', normalizedNames);
+    const createdAfter = new Date(
+      Date.now() - Math.max(recentWithinMinutes ?? 240, 1) * 60_000,
+    ).toISOString();
+    const rows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id, name
+          FROM notes
+          WHERE user_id = @userId
+            AND deleted_at IS NULL
+            AND created_at >= @createdAfter
+            AND lower(name) IN (${names.placeholders})
+          ORDER BY created_at DESC, id DESC
+          LIMIT @limit
+        `,
+      )
+      .all({
+        ...names.params,
+        userId,
+        createdAfter,
+        limit: Math.min(Math.max(expectedCount, 1), 100),
+      }) as Array<{ id: number; name: string }>;
+
+    if (expectedParentCount && rows.length < expectedParentCount) {
+      throw new BadRequestException(
+        `Found ${rows.length} recent parent notes, expected ${expectedParentCount}`,
+      );
+    }
+
+    return rows.sort((left, right) => left.id - right.id);
+  }
+
+  private resolveBatchParents(
+    userId: number,
+    options: CreateNestedBatchOptions,
+  ): Array<{ id: number; name: string }> {
+    switch (options.parentScope) {
+      case 'allActiveNotes':
+        return this.listActiveParentSnapshot(userId);
+      case 'parentIds':
+        return this.listParentSnapshot(userId, options.parentIds ?? []);
+      case 'recentNamedNotes':
+        return this.listRecentNamedParentSnapshot(
+          userId,
+          options.parentNames ?? [],
+          options.expectedParentCount,
+          options.recentWithinMinutes,
+        );
+    }
+  }
+
+  private formatBatchNoteName(pattern: string, index: number, parentName: string): string {
+    const name = pattern
+      .replaceAll('{index}', String(index))
+      .replaceAll('{parent}', parentName)
+      .trim();
+
+    return name || `Заметка ${index}`;
   }
 
   private collectSubtreeIds(userId: number, rootId: number): number[] {
