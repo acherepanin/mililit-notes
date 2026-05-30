@@ -50,6 +50,11 @@ export class UploadAttachmentDto {
   @Min(1)
   noteId?: number | null;
 
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  folderId?: number | null;
+
   @IsString()
   @MinLength(1)
   @MaxLength(180)
@@ -77,6 +82,39 @@ export class AttachAttachmentDto {
   @IsInt()
   @Min(1)
   noteId?: number | null;
+}
+
+export class MoveAttachmentFolderDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  folderId?: number | null;
+}
+
+export class AttachmentFolderDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  parentId?: number | null;
+}
+
+export class MoveAttachmentFolderParentDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  parentId?: number | null;
+}
+
+export class DuplicateAttachmentDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  folderId?: number | null;
 }
 
 export class CreateShareLinkDto {

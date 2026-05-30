@@ -16,6 +16,7 @@ import type {
   AiToolExecutionResponse,
   AdminUser,
   Attachment,
+  AttachmentFolder,
   AuthUser,
   CreateAdminUserPayload,
   CreateNotePayload,
@@ -206,9 +207,46 @@ export const workspaceApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  listAccountAttachments: () => request<Attachment[]>('/api/attachments'),
+  listAccountAttachments: (folderId?: number | null) => {
+    const params =
+      folderId === undefined
+        ? ''
+        : folderId === null
+          ? '?folderId=root'
+          : `?folderId=${folderId}`;
+    return request<Attachment[]>(`/api/attachments${params}`);
+  },
+  listAttachmentFolders: () => request<AttachmentFolder[]>('/api/attachment-folders'),
+  createAttachmentFolder: (payload: { name: string; parentId?: number | null }) =>
+    request<AttachmentFolder>('/api/attachment-folders', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  renameAttachmentFolder: (id: number, name: string) =>
+    request<AttachmentFolder>(`/api/attachment-folders/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  deleteAttachmentFolder: (id: number) =>
+    request<{ id: number }>(`/api/attachment-folders/${id}`, { method: 'DELETE' }),
+  moveAttachmentFolderParent: (id: number, parentId: number | null) =>
+    request<AttachmentFolder>(`/api/attachment-folders/${id}/parent`, {
+      method: 'PATCH',
+      body: JSON.stringify({ parentId }),
+    }),
+  duplicateAttachment: (id: number, folderId?: number | null) =>
+    request<Attachment>(`/api/attachments/${id}/duplicate`, {
+      method: 'POST',
+      body: JSON.stringify({ folderId: folderId ?? null }),
+    }),
+  moveAttachmentToFolder: (id: number, folderId: number | null) =>
+    request<Attachment>(`/api/attachments/${id}/folder`, {
+      method: 'PATCH',
+      body: JSON.stringify({ folderId }),
+    }),
   uploadAttachment: (payload: {
     noteId?: number | null;
+    folderId?: number | null;
     fileName: string;
     mimeType?: string;
     contentBase64: string;
@@ -231,9 +269,16 @@ export const workspaceApi = {
     const params = ids.length ? `?ids=${ids.join(',')}` : '';
     return requestBlob(`/api/notes/${noteId}/attachments/archive${params}`);
   },
-  downloadAccountAttachmentsArchive: (ids: number[] = []) => {
-    const params = ids.length ? `?ids=${ids.join(',')}` : '';
-    return requestBlob(`/api/attachments/archive${params}`);
+  downloadAccountAttachmentsArchive: (ids: number[] = [], folderIds: number[] = []) => {
+    const searchParams = new URLSearchParams();
+    if (ids.length) {
+      searchParams.set('ids', ids.join(','));
+    }
+    if (folderIds.length) {
+      searchParams.set('folderIds', folderIds.join(','));
+    }
+    const query = searchParams.toString();
+    return requestBlob(`/api/attachments/archive${query ? `?${query}` : ''}`);
   },
   renameAttachment: (id: number, fileName: string) =>
     request<Attachment>(`/api/attachments/${id}`, {

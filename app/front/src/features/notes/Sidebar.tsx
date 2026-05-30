@@ -17,7 +17,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react';
-import { useId, useMemo, useRef, useState } from 'react';
+import { useId, useMemo, useRef, useState, type MouseEvent } from 'react';
 
 import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
@@ -28,6 +28,7 @@ import { TooltipText } from '../../components/TooltipText';
 import { usePortalMenu } from '../../components/usePortalMenu';
 import type { Translator } from '../../i18n';
 import type { NoteTreeFilter, NoteTreeNode, SaveStatus, UserLanguage, UserTheme } from '../../types';
+import { flattenTreeInOrder } from '../../utils/tree';
 import { NotesTree } from './NotesTree';
 import { SidebarThemePicker } from './SidebarThemePicker';
 
@@ -244,6 +245,7 @@ interface SidebarProps {
   favoriteCount: number;
   totalNotes: number;
   selectedId: number | null;
+  selectedNoteIds: Set<number>;
   expanded: Set<number>;
   draggedId: number | null;
   status: SaveStatus;
@@ -258,9 +260,14 @@ interface SidebarProps {
   onSelectRoot: () => void;
   onDropRoot: () => void;
   onToggleNode: (id: number) => void;
-  onSelectNode: (id: number) => void;
+  onSelectNoteItem: (
+    id: number,
+    flatOrder: number[],
+    event: Pick<MouseEvent, 'shiftKey' | 'ctrlKey' | 'metaKey'>,
+  ) => void;
   onRenameNode: (id: number, name: string) => void;
   onDeleteNode: (id: number) => void;
+  onDeleteSelectedNotes: () => void;
   onDragStart: (id: number | null) => void;
   onDropNode: (parentId: number | null) => void;
   onLanguageToggle: () => void;
@@ -287,6 +294,7 @@ export function Sidebar({
   favoriteCount,
   totalNotes,
   selectedId,
+  selectedNoteIds,
   expanded,
   draggedId,
   status,
@@ -301,9 +309,10 @@ export function Sidebar({
   onSelectRoot,
   onDropRoot,
   onToggleNode,
-  onSelectNode,
+  onSelectNoteItem,
   onRenameNode,
   onDeleteNode,
+  onDeleteSelectedNotes,
   onDragStart,
   onDropNode,
   onLanguageToggle,
@@ -327,6 +336,25 @@ export function Sidebar({
   const tagFilterValue = treeFilter.kind === 'tag' ? treeFilter.tag : null;
   const showPinnedShortcuts =
     treeFilter.kind === 'all' && query.trim().length === 0 && pinnedNodes.length > 0;
+  const treeFlatOrder = useMemo(() => {
+    const order: number[] = [];
+    const seen = new Set<number>();
+    const appendUnique = (ids: number[]) => {
+      for (const id of ids) {
+        if (seen.has(id)) {
+          continue;
+        }
+        seen.add(id);
+        order.push(id);
+      }
+    };
+    if (showPinnedShortcuts) {
+      appendUnique(flattenTreeInOrder(pinnedNodes));
+    }
+    appendUnique(flattenTreeInOrder(tree));
+    return order;
+  }, [pinnedNodes, showPinnedShortcuts, tree]);
+  const selectedNotesCount = selectedNoteIds.size;
 
   return (
     <aside className={`sidebar ${isOpen ? 'sidebar--open' : ''}`}>
@@ -433,6 +461,7 @@ export function Sidebar({
           <nav
             className={`tree-panel ${draggedId ? 'tree-panel--root-drop' : ''}`}
             aria-label={t('notesTree')}
+            aria-multiselectable="true"
             onClick={(event) => {
               const target = event.target as HTMLElement;
               if (!target.closest('.tree__row')) {
@@ -451,11 +480,12 @@ export function Sidebar({
                   <NotesTree
                     nodes={pinnedNodes}
                     selectedId={selectedId}
+                    selectedIds={selectedNoteIds}
                     expanded={expanded}
                     draggedId={draggedId}
                     isDraggable={false}
                     onToggle={onToggleNode}
-                    onSelect={onSelectNode}
+                    onSelect={(id, event) => onSelectNoteItem(id, treeFlatOrder, event)}
                     onRename={onRenameNode}
                     onDelete={onDeleteNode}
                     onDragStart={onDragStart}
@@ -467,10 +497,11 @@ export function Sidebar({
                   <NotesTree
                     nodes={tree}
                     selectedId={selectedId}
+                    selectedIds={selectedNoteIds}
                     expanded={expanded}
                     draggedId={draggedId}
                     onToggle={onToggleNode}
-                    onSelect={onSelectNode}
+                    onSelect={(id, event) => onSelectNoteItem(id, treeFlatOrder, event)}
                     onRename={onRenameNode}
                     onDelete={onDeleteNode}
                     onDragStart={onDragStart}
@@ -497,6 +528,15 @@ export function Sidebar({
           <span>{totalNotes}</span>
         </span>
         <div className="sidebar__foot-actions">
+          {selectedNotesCount > 1 && !isMenuMode ? (
+            <IconButton
+              label={t('deleteSelected')}
+              icon={<Trash2 size={16} />}
+              variant="danger"
+              onClick={onDeleteSelectedNotes}
+              className="sidebar__bulk-delete"
+            />
+          ) : null}
           <IconButton
             label={t('logout')}
             icon={<LogOut size={16} />}

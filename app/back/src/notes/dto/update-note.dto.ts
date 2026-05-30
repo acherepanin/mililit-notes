@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateNoteDto {
   @IsOptional()
@@ -22,4 +22,8 @@ export class UpdateNoteDto {
   @IsOptional()
   @IsBoolean()
   isPinned?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  attachmentFolderId?: number | null;
 }

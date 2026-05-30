@@ -12,6 +12,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { adminApi } from '../../api';
+import { useConfirmDelete } from '../../components/DeleteConfirmationProvider';
 import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import { TooltipText } from '../../components/TooltipText';
@@ -63,6 +64,7 @@ export function AdminPanel({
   onError,
   onSuccess,
 }: AdminPanelProps) {
+  const confirmDelete = useConfirmDelete();
   const [tab, setTab] = useState<AdminTab>('users');
   const tabsRef = useHorizontalWheel<HTMLDivElement>();
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -194,7 +196,18 @@ export function AdminPanel({
       .catch(() => onError(t('adminSaveError')));
   };
 
-  const deleteUser = (userId: number) => {
+  const deleteUser = async (userId: number) => {
+    const targetUser = users.find((item) => item.id === userId);
+    const confirmed = await confirmDelete({
+      title: t('delete'),
+      description: targetUser
+        ? `${t('deleteUserQuestion')} (${targetUser.username})`
+        : t('deleteUserQuestion'),
+    });
+    if (!confirmed) {
+      return;
+    }
+
     adminApi
       .deleteUser(userId)
       .then(() => {

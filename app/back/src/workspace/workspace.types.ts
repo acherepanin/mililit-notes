@@ -10,10 +10,19 @@ export interface NoteTemplateResponse {
   updatedAt: string;
 }
 
+export interface AttachmentFolderResponse {
+  id: number;
+  parentId: number | null;
+  name: string;
+  position: number;
+  createdAt: string;
+}
+
 export interface AttachmentResponse {
   id: number;
   noteId: number | null;
   noteName: string | null;
+  folderId: number | null;
   fileName: string;
   mimeType: string;
   size: number;

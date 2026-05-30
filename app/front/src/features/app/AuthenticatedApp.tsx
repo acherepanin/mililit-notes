@@ -18,6 +18,7 @@ import {
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { aiApi, notesApi, workspaceApi } from '../../api';
+import { DeleteConfirmationProvider, useConfirmDelete } from '../../components/DeleteConfirmationProvider';
 import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import { Modal } from '../../components/Modal';
@@ -28,7 +29,7 @@ import { formatCurrentCodeBlock } from '../../editor/editorCode';
 import { useNotebookEditor } from '../../editor/useNotebookEditor';
 import type { Translator } from '../../i18n';
 import { getNextTheme } from '../../themes';
-import type { AiSettings, AuthUser, Tag, UserLanguage, UserTheme } from '../../types';
+import type { AiSettings, AuthUser, NoteTreeNode, Tag, UserLanguage, UserTheme } from '../../types';
 import type { ToastKind } from '../../components/useToasts';
 import { escapeHtml } from '../../utils/html';
 import { AiAssistant } from '../ai/AiAssistant';
@@ -51,7 +52,6 @@ const AdminPanel = lazy(() =>
 );
 
 type ActiveModal =
-  | { type: 'delete' }
   | { type: 'link' }
   | { type: 'trash' }
   | { type: 'versions' }
@@ -73,7 +73,28 @@ interface AuthenticatedAppProps {
   pushToast: (kind: ToastKind, message: string, ttl?: number) => void;
 }
 
-export default function AuthenticatedApp({
+export default function AuthenticatedApp(props: AuthenticatedAppProps) {
+  return (
+    <DeleteConfirmationProvider t={props.t}>
+      <AuthenticatedAppMain {...props} />
+    </DeleteConfirmationProvider>
+  );
+}
+
+function findNoteName(nodes: NoteTreeNode[], id: number): string | null {
+  for (const node of nodes) {
+    if (node.id === id) {
+      return node.name;
+    }
+    const childName = findNoteName(node.children, id);
+    if (childName) {
+      return childName;
+    }
+  }
+  return null;
+}
+
+function AuthenticatedAppMain({
   user,
   language,
   theme,
@@ -83,6 +104,7 @@ export default function AuthenticatedApp({
   onLogout,
   pushToast,
 }: AuthenticatedAppProps) {
+  const confirmDelete = useConfirmDelete();
   const copyFieldLabels = useMemo(() => createCopyFieldLabels(t), [t]);
   const workspace = useNotesWorkspace(true);
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
@@ -231,7 +253,18 @@ export default function AuthenticatedApp({
   );
 
   const deleteTreeNote = useCallback(
-    (id: number) => {
+    async (id: number) => {
+      const noteName = findNoteName(workspace.tree, id);
+      const confirmed = await confirmDelete({
+        title: t('delete'),
+        description: noteName
+          ? `${t('deleteNoteTreeQuestion')} (${noteName})`
+          : t('deleteNoteTreeQuestion'),
+      });
+      if (!confirmed) {
+        return;
+      }
+
       workspace
         .deleteNote(id)
         .then(() => {
@@ -242,22 +275,57 @@ export default function AuthenticatedApp({
           pushToast('error', t('deleteError'));
         });
     },
-    [pushToast, t, workspace],
+    [confirmDelete, pushToast, t, workspace],
   );
 
-  const submitDelete = () => {
+  const deleteCurrentNote = useCallback(async () => {
+    const confirmed = await confirmDelete({
+      title: t('delete'),
+      description: t('deleteQuestion'),
+    });
+    if (!confirmed) {
+      return;
+    }
+
     workspace
       .deleteCurrentNote()
       .then(() => {
         editor?.commands.clearContent();
-        setActiveModal(null);
         pushToast('success', t('delete'));
       })
       .catch((caught: unknown) => {
         workspace.setActionError(caught, t('deleteError'));
         pushToast('error', t('deleteError'));
       });
-  };
+  }, [confirmDelete, editor, pushToast, t, workspace]);
+
+  const deleteSelectedNotes = useCallback(async () => {
+    const ids = [...workspace.selectedNoteIds];
+    if (ids.length === 0) {
+      return;
+    }
+
+    const confirmed = await confirmDelete({
+      title: t('deleteSelected'),
+      description: t('deleteNotesQuestion'),
+    });
+    if (!confirmed) {
+      return;
+    }
+
+    workspace
+      .deleteNotes(ids)
+      .then(() => {
+        if (workspace.selectedId === null) {
+          editor?.commands.clearContent();
+        }
+        pushToast('success', t('delete'));
+      })
+      .catch((caught: unknown) => {
+        workspace.setActionError(caught, t('deleteError'));
+        pushToast('error', t('deleteError'));
+      });
+  }, [confirmDelete, editor, pushToast, t, workspace]);
 
   const openLinkModal = useCallback(() => {
     const currentHref = editor?.getAttributes('link').href as string | undefined;
@@ -375,6 +443,14 @@ export default function AuthenticatedApp({
 
   const deleteGlobalTag = useCallback(
     async (tag: Tag) => {
+      const confirmed = await confirmDelete({
+        title: t('delete'),
+        description: `${t('deleteTagQuestion')} (${tag.name})`,
+      });
+      if (!confirmed) {
+        return;
+      }
+
       try {
         await notesApi.deleteTag(tag.id);
         setGlobalTags((current) => current.filter((currentTag) => currentTag.id !== tag.id));
@@ -395,7 +471,7 @@ export default function AuthenticatedApp({
         throw caught;
       }
     },
-    [pushToast, t, workspace],
+    [confirmDelete, pushToast, t, workspace],
   );
 
   const toggleFavorite = useCallback(() => {
@@ -654,6 +730,7 @@ export default function AuthenticatedApp({
         favoriteCount={workspace.favoriteCount}
         totalNotes={workspace.totalNotes}
         selectedId={workspace.selectedId}
+        selectedNoteIds={workspace.selectedNoteIds}
         expanded={workspace.expanded}
         draggedId={workspace.draggedId}
         status={workspace.status}
@@ -679,12 +756,13 @@ export default function AuthenticatedApp({
         onSelectRoot={workspace.selectRoot}
         onDropRoot={() => dropDraggedNote(null)}
         onToggleNode={workspace.toggleExpanded}
-        onSelectNode={(id) => {
+        onSelectNoteItem={(id, flatOrder, event) => {
           setActiveView('notes');
-          workspace.selectNote(id);
+          workspace.selectNoteItem(id, flatOrder, event);
         }}
         onRenameNode={renameTreeNote}
         onDeleteNode={deleteTreeNote}
+        onDeleteSelectedNotes={() => void deleteSelectedNotes()}
         onDragStart={workspace.setDraggedId}
         onDropNode={dropDraggedNote}
         onLanguageToggle={() => onLanguageChange(language === 'ru' ? 'en' : 'ru')}
@@ -724,7 +802,7 @@ export default function AuthenticatedApp({
               onOpenSidebar={() => workspace.setMobileTreeOpen((isOpen) => !isOpen)}
               onDraftNameChange={workspace.updateDraftName}
               onSave={() => void saveEditorContent()}
-              onDelete={() => setActiveModal({ type: 'delete' })}
+              onDelete={() => void deleteCurrentNote()}
               onToggleFavorite={toggleFavorite}
               onTogglePinned={togglePinned}
               onTagsChange={updateTags}
@@ -815,30 +893,6 @@ export default function AuthenticatedApp({
         commands={commandPaletteItems}
         onClose={() => setIsCommandPaletteOpen(false)}
       />
-
-      <Modal
-        isOpen={activeModal?.type === 'delete'}
-        title={t('delete')}
-        closeLabel={t('close')}
-        onClose={() => setActiveModal(null)}
-      >
-        <div className="modal-form">
-          <p>{t('deleteQuestion')}</p>
-          <div className="modal-actions">
-            <IconButton
-              label={t('cancel')}
-              icon={<Undo2 size={16} />}
-              onClick={() => setActiveModal(null)}
-            />
-            <IconButton
-              label={t('delete')}
-              icon={<Trash2 size={16} />}
-              variant="danger"
-              onClick={submitDelete}
-            />
-          </div>
-        </div>
-      </Modal>
 
       <Modal
         isOpen={activeModal?.type === 'trash'}

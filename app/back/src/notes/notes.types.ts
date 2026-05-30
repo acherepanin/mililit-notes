@@ -11,6 +11,7 @@ export interface NoteRecord {
   deleted_at: string | null;
   deleted_by: number | null;
   delete_reason: string | null;
+  attachment_folder_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -26,6 +27,7 @@ export interface NoteResponse {
   isFavorite: boolean;
   isPinned: boolean;
   tags: string[];
+  attachmentFolderId: number | null;
   createdAt: string;
   updatedAt: string;
 }

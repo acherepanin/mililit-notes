@@ -1,4 +1,10 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -13,15 +19,20 @@ import { NotesService } from '../notes/notes.service';
 import type { NoteRecord } from '../notes/notes.types';
 import { SecretFieldCryptoService } from '../notes/secret-field-crypto.service';
 import type {
+  AttachmentFolderDto,
   CreateNoteFromTemplateDto,
   CreateShareLinkDto,
   AttachAttachmentDto,
+  DuplicateAttachmentDto,
   ImportNotesDto,
+  MoveAttachmentFolderDto,
+  MoveAttachmentFolderParentDto,
   RenameAttachmentDto,
   TemplateDto,
   UploadAttachmentDto,
 } from './dto/workspace.dto';
 import type {
+  AttachmentFolderResponse,
   AttachmentResponse,
   ExportResponse,
   NoteTemplateResponse,
@@ -51,10 +62,20 @@ interface ImportableNote {
   tags: string[];
 }
 
+interface AttachmentFolderRecord {
+  id: number;
+  user_id: number;
+  parent_id: number | null;
+  name: string;
+  position: number;
+  created_at: string;
+}
+
 interface AttachmentRecord {
   id: number;
   note_id: number | null;
   note_name?: string | null;
+  folder_id?: number | null;
   user_id: number;
   file_name: string;
   mime_type: string;
@@ -282,8 +303,16 @@ export class WorkspaceService {
 
   uploadAttachment(userId: number, dto: UploadAttachmentDto): AttachmentResponse {
     const noteId = dto.noteId ?? null;
-    if (noteId !== null) {
-      this.requireNote(userId, noteId);
+    const folderId =
+      noteId !== null
+        ? this.resolveUploadFolderForNote(
+            userId,
+            this.requireNote(userId, noteId),
+            dto.folderId ?? null,
+          )
+        : (dto.folderId ?? null);
+    if (folderId !== null) {
+      this.requireAttachmentFolder(userId, folderId);
     }
 
     const content = Buffer.from(dto.contentBase64, 'base64');
@@ -303,12 +332,13 @@ export class WorkspaceService {
     const result = this.databaseService.connection
       .prepare(
         `
-          INSERT INTO attachments (note_id, user_id, file_name, mime_type, size, storage_path, created_at)
-          VALUES (@noteId, @userId, @fileName, @mimeType, @size, @storagePath, @createdAt)
+          INSERT INTO attachments (note_id, folder_id, user_id, file_name, mime_type, size, storage_path, created_at)
+          VALUES (@noteId, @folderId, @userId, @fileName, @mimeType, @size, @storagePath, @createdAt)
         `,
       )
       .run({
         noteId,
+        folderId,
         userId,
         fileName,
         mimeType: dto.mimeType ?? 'application/octet-stream',
@@ -354,19 +384,217 @@ export class WorkspaceService {
     return this.getAttachment(userId, id);
   }
 
-  listAccountAttachments(userId: number): AttachmentResponse[] {
+  listAccountAttachments(userId: number, folderId?: number | null): AttachmentResponse[] {
+    let sql = `
+      SELECT attachments.*, notes.name as note_name
+      FROM attachments
+      LEFT JOIN notes ON notes.id = attachments.note_id AND notes.deleted_at IS NULL
+      WHERE attachments.user_id = @userId
+    `;
+    const params: { userId: number; folderId?: number } = { userId };
+    if (folderId !== undefined) {
+      if (folderId === null) {
+        sql += ' AND attachments.folder_id IS NULL';
+      } else {
+        sql += ' AND attachments.folder_id = @folderId';
+        params.folderId = folderId;
+      }
+    }
+    sql += ' ORDER BY attachments.created_at DESC';
+    const rows = this.databaseService.connection.prepare(sql).all(params) as AttachmentRecord[];
+    return rows.map((row) => this.mapAttachment(row));
+  }
+
+  listAttachmentFolders(userId: number): AttachmentFolderResponse[] {
     const rows = this.databaseService.connection
       .prepare(
         `
-          SELECT attachments.*, notes.name as note_name
-          FROM attachments
-          LEFT JOIN notes ON notes.id = attachments.note_id AND notes.deleted_at IS NULL
-          WHERE attachments.user_id = @userId
-          ORDER BY attachments.created_at DESC
+          SELECT *
+          FROM attachment_folders
+          WHERE user_id = @userId
+          ORDER BY parent_id IS NOT NULL, position, lower(name)
         `,
       )
-      .all({ userId }) as AttachmentRecord[];
-    return rows.map((row) => this.mapAttachment(row));
+      .all({ userId }) as AttachmentFolderRecord[];
+    return rows.map((row) => this.mapAttachmentFolder(row));
+  }
+
+  createAttachmentFolder(userId: number, dto: AttachmentFolderDto): AttachmentFolderResponse {
+    const parentId = dto.parentId ?? null;
+    if (parentId !== null) {
+      this.requireAttachmentFolder(userId, parentId);
+    }
+    const name = this.sanitizeFolderName(dto.name);
+    this.assertUniqueFolderName(userId, parentId, name);
+    const position = this.nextFolderPosition(userId, parentId);
+    const result = this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO attachment_folders (user_id, parent_id, name, position, created_at)
+          VALUES (@userId, @parentId, @name, @position, @createdAt)
+        `,
+      )
+      .run({
+        userId,
+        parentId,
+        name,
+        position,
+        createdAt: new Date().toISOString(),
+      });
+    return this.getAttachmentFolder(userId, Number(result.lastInsertRowid));
+  }
+
+  renameAttachmentFolder(
+    userId: number,
+    id: number,
+    dto: AttachmentFolderDto,
+  ): AttachmentFolderResponse {
+    const folder = this.requireAttachmentFolder(userId, id);
+    const name = this.sanitizeFolderName(dto.name);
+    this.assertUniqueFolderName(userId, folder.parent_id ?? null, name, id);
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE attachment_folders
+          SET name = @name
+          WHERE id = @id AND user_id = @userId
+        `,
+      )
+      .run({ id, userId, name });
+    return this.getAttachmentFolder(userId, id);
+  }
+
+  deleteAttachmentFolder(userId: number, id: number): { id: number } {
+    this.requireAttachmentFolder(userId, id);
+    const folderIds = this.collectDescendantFolderIds(userId, id);
+    if (folderIds.length === 0) {
+      return { id };
+    }
+
+    const folderList = bindSqlList('folderId', folderIds);
+    const attachmentRows = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id
+          FROM attachments
+          WHERE user_id = @userId AND folder_id IN (${folderList.placeholders})
+        `,
+      )
+      .all({ userId, ...folderList.params }) as Array<{ id: number }>;
+    const attachmentIds = attachmentRows.map((row) => row.id);
+    if (attachmentIds.length > 0) {
+      this.attachmentFilesService.deleteByIds(userId, attachmentIds);
+      const attachmentList = bindSqlList('attachmentId', attachmentIds);
+      this.databaseService.connection
+        .prepare(
+          `DELETE FROM attachments WHERE user_id = @userId AND id IN (${attachmentList.placeholders})`,
+        )
+        .run({ userId, ...attachmentList.params });
+    }
+
+    for (const folderId of [...folderIds].reverse()) {
+      this.databaseService.connection
+        .prepare('DELETE FROM attachment_folders WHERE id = @folderId AND user_id = @userId')
+        .run({ folderId, userId });
+    }
+
+    return { id };
+  }
+
+  moveAttachmentFolder(
+    userId: number,
+    id: number,
+    dto: MoveAttachmentFolderParentDto,
+  ): AttachmentFolderResponse {
+    this.requireAttachmentFolder(userId, id);
+    const parentId = dto.parentId ?? null;
+    if (parentId === id) {
+      throw new BadRequestException('A folder cannot be moved into itself');
+    }
+    const folder = this.requireAttachmentFolder(userId, id);
+    if (parentId !== null) {
+      this.requireAttachmentFolder(userId, parentId);
+      if (this.isFolderDescendant(userId, id, parentId)) {
+        throw new BadRequestException('A folder cannot be moved into its subfolder');
+      }
+    }
+    this.assertUniqueFolderName(userId, parentId, folder.name, id);
+
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE attachment_folders
+          SET parent_id = @parentId
+          WHERE id = @id AND user_id = @userId
+        `,
+      )
+      .run({ id, userId, parentId });
+
+    return this.getAttachmentFolder(userId, id);
+  }
+
+  duplicateAttachment(
+    userId: number,
+    id: number,
+    dto: DuplicateAttachmentDto = {},
+  ): AttachmentResponse {
+    const source = this.getAttachmentRecord(userId, id);
+    if (!existsSync(source.storage_path)) {
+      throw new NotFoundException('Attachment file was not found');
+    }
+
+    const folderId = dto.folderId ?? source.folder_id ?? null;
+    if (folderId !== null) {
+      this.requireAttachmentFolder(userId, folderId);
+    }
+
+    const content = readFileSync(source.storage_path);
+    const extension = extname(source.file_name).toLowerCase();
+    const storageName = `${userId}-${Date.now()}-${randomBytes(8).toString('hex')}${extension}`;
+    const storagePath = join(this.uploadDir, storageName);
+    writeFileSync(storagePath, content);
+
+    const result = this.databaseService.connection
+      .prepare(
+        `
+          INSERT INTO attachments (note_id, folder_id, user_id, file_name, mime_type, size, storage_path, created_at)
+          VALUES (@noteId, @folderId, @userId, @fileName, @mimeType, @size, @storagePath, @createdAt)
+        `,
+      )
+      .run({
+        noteId: source.note_id,
+        folderId,
+        userId,
+        fileName: this.makeUniqueAttachmentName(userId, source.file_name, folderId),
+        mimeType: source.mime_type,
+        size: content.byteLength,
+        storagePath,
+        createdAt: new Date().toISOString(),
+      });
+
+    return this.getAttachment(userId, Number(result.lastInsertRowid));
+  }
+
+  moveAttachmentToFolder(
+    userId: number,
+    id: number,
+    dto: MoveAttachmentFolderDto,
+  ): AttachmentResponse {
+    this.getAttachmentRecord(userId, id);
+    const folderId = dto.folderId ?? null;
+    if (folderId !== null) {
+      this.requireAttachmentFolder(userId, folderId);
+    }
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE attachments
+          SET folder_id = @folderId
+          WHERE id = @id AND user_id = @userId
+        `,
+      )
+      .run({ id, userId, folderId });
+    return this.getAttachment(userId, id);
   }
 
   listAttachments(userId: number, noteId: number): AttachmentResponse[] {
@@ -425,18 +653,73 @@ export class WorkspaceService {
   downloadAccountAttachmentsArchive(
     userId: number,
     attachmentIds: number[] = [],
+    folderIds: number[] = [],
   ): { fileName: string; content: Buffer } {
-    const rows = this.listAttachmentRecords(userId, attachmentIds);
-    const names = new Set<string>();
-    const entries = rows
-      .filter((row) => existsSync(row.storage_path))
-      .map((row) => ({
-        fileName: this.makeUniqueZipName(row.file_name, names),
+    const folders = this.listAttachmentFolders(userId);
+    const folderById = new Map(folders.map((folder) => [folder.id, folder]));
+    const usedPaths = new Set<string>();
+    const includedAttachmentIds = new Set<number>();
+    const entries: ZipEntry[] = [];
+
+    for (const folderId of folderIds) {
+      const folder = this.getAttachmentFolder(userId, folderId);
+      const subtreeFolderIds = this.collectDescendantFolderIds(userId, folderId);
+      if (subtreeFolderIds.length === 0) {
+        continue;
+      }
+      const folderList = bindSqlList('folderId', subtreeFolderIds);
+      const rows = this.databaseService.connection
+        .prepare(
+          `
+            SELECT *
+            FROM attachments
+            WHERE user_id = @userId AND folder_id IN (${folderList.placeholders})
+            ORDER BY folder_id, created_at DESC
+          `,
+        )
+        .all({ userId, ...folderList.params }) as AttachmentRecord[];
+
+      for (const row of rows) {
+        if (includedAttachmentIds.has(row.id) || !existsSync(row.storage_path)) {
+          continue;
+        }
+        includedAttachmentIds.add(row.id);
+        entries.push({
+          fileName: this.makeUniqueZipPath(
+            this.buildFolderAttachmentZipPath(folderById, folder, row),
+            usedPaths,
+          ),
+          content: readFileSync(row.storage_path),
+        });
+      }
+    }
+
+    for (const attachmentId of attachmentIds) {
+      if (includedAttachmentIds.has(attachmentId)) {
+        continue;
+      }
+      const row = this.getAttachmentRecord(userId, attachmentId);
+      if (!existsSync(row.storage_path)) {
+        continue;
+      }
+      includedAttachmentIds.add(row.id);
+      entries.push({
+        fileName: this.makeUniqueZipPath(this.sanitizeAttachmentName(row.file_name), usedPaths),
         content: readFileSync(row.storage_path),
-      }));
+      });
+    }
+
+    if (entries.length === 0) {
+      throw new BadRequestException('No files available for download');
+    }
+
+    const archiveName =
+      folderIds.length === 1 && attachmentIds.length === 0
+        ? `${this.sanitizeZipFolderSegment(this.requireAttachmentFolder(userId, folderIds[0]).name)}.zip`
+        : 'account-files.zip';
 
     return {
-      fileName: 'account-attachments.zip',
+      fileName: archiveName,
       content: this.createZip(entries),
     };
   }
@@ -762,11 +1045,216 @@ export class WorkspaceService {
       id: row.id,
       noteId: row.note_id,
       noteName: row.note_name ?? null,
+      folderId: row.folder_id ?? null,
       fileName: row.file_name,
       mimeType: row.mime_type,
       size: row.size,
       createdAt: row.created_at,
     };
+  }
+
+  private mapAttachmentFolder(row: AttachmentFolderRecord): AttachmentFolderResponse {
+    return {
+      id: row.id,
+      parentId: row.parent_id,
+      name: row.name,
+      position: row.position,
+      createdAt: row.created_at,
+    };
+  }
+
+  private getAttachmentFolder(userId: number, id: number): AttachmentFolderResponse {
+    return this.mapAttachmentFolder(this.requireAttachmentFolder(userId, id));
+  }
+
+  private requireAttachmentFolder(userId: number, id: number): AttachmentFolderRecord {
+    const row = this.databaseService.connection
+      .prepare('SELECT * FROM attachment_folders WHERE id = @id AND user_id = @userId')
+      .get({ id, userId }) as AttachmentFolderRecord | undefined;
+    if (!row) {
+      throw new NotFoundException(`Folder ${id} was not found`);
+    }
+    return row;
+  }
+
+  private nextFolderPosition(userId: number, parentId: number | null): number {
+    const row = (
+      parentId === null
+        ? this.databaseService.connection.prepare(
+            `
+              SELECT COALESCE(MAX(position), -1) as maxPosition
+              FROM attachment_folders
+              WHERE user_id = @userId AND parent_id IS NULL
+            `,
+          )
+        : this.databaseService.connection.prepare(
+            `
+              SELECT COALESCE(MAX(position), -1) as maxPosition
+              FROM attachment_folders
+              WHERE user_id = @userId AND parent_id = @parentId
+            `,
+          )
+    ).get(parentId === null ? { userId } : { userId, parentId }) as { maxPosition: number };
+    return Number(row.maxPosition) + 1;
+  }
+
+  private collectDescendantFolderIds(userId: number, rootId: number): number[] {
+    const collected: number[] = [rootId];
+    const queue = [rootId];
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      if (currentId === undefined) {
+        continue;
+      }
+      const children = this.databaseService.connection
+        .prepare(
+          'SELECT id FROM attachment_folders WHERE parent_id = @parentId AND user_id = @userId',
+        )
+        .all({ parentId: currentId, userId }) as Array<{ id: number }>;
+      for (const child of children) {
+        collected.push(child.id);
+        queue.push(child.id);
+      }
+    }
+    return collected;
+  }
+
+  private isFolderDescendant(userId: number, ancestorId: number, candidateId: number): boolean {
+    let currentId: number | null = candidateId;
+    while (currentId !== null) {
+      if (currentId === ancestorId) {
+        return true;
+      }
+      const row = this.databaseService.connection
+        .prepare('SELECT parent_id FROM attachment_folders WHERE id = @id AND user_id = @userId')
+        .get({ id: currentId, userId }) as { parent_id: number | null } | undefined;
+      currentId = row?.parent_id ?? null;
+    }
+    return false;
+  }
+
+  private makeUniqueAttachmentName(
+    userId: number,
+    fileName: string,
+    folderId: number | null,
+  ): string {
+    const baseName = this.sanitizeAttachmentName(fileName);
+    const extension = extname(baseName);
+    const stem = baseName.slice(0, baseName.length - extension.length) || 'file';
+    let candidate = baseName;
+    let index = 1;
+    while (this.attachmentNameExists(userId, candidate, folderId)) {
+      candidate = `${stem} (${index})${extension}`;
+      index += 1;
+    }
+    return candidate;
+  }
+
+  private attachmentNameExists(
+    userId: number,
+    fileName: string,
+    folderId: number | null,
+  ): boolean {
+    const row = this.databaseService.connection
+      .prepare(
+        folderId === null
+          ? `
+              SELECT id
+              FROM attachments
+              WHERE user_id = @userId AND folder_id IS NULL AND file_name = @fileName
+              LIMIT 1
+            `
+          : `
+              SELECT id
+              FROM attachments
+              WHERE user_id = @userId AND folder_id = @folderId AND file_name = @fileName
+              LIMIT 1
+            `,
+      )
+      .get(folderId === null ? { userId, fileName } : { userId, fileName, folderId }) as
+      | { id: number }
+      | undefined;
+    return Boolean(row);
+  }
+
+  private resolveUploadFolderForNote(
+    userId: number,
+    note: NoteRecord,
+    explicitFolderId: number | null,
+  ): number | null {
+    if (explicitFolderId !== null) {
+      return explicitFolderId;
+    }
+
+    if (note.attachment_folder_id !== null) {
+      this.requireAttachmentFolder(userId, note.attachment_folder_id);
+      return note.attachment_folder_id;
+    }
+
+    const folderName = this.sanitizeFolderName(note.name);
+    const existing = this.findFolderByParentAndName(userId, null, folderName);
+    const folderId = existing?.id ?? this.createAttachmentFolder(userId, { name: folderName }).id;
+    this.setNoteAttachmentFolder(userId, note.id, folderId);
+    return folderId;
+  }
+
+  private setNoteAttachmentFolder(userId: number, noteId: number, folderId: number | null): void {
+    this.databaseService.connection
+      .prepare(
+        `
+          UPDATE notes
+          SET attachment_folder_id = @folderId, updated_at = @updatedAt
+          WHERE id = @noteId AND user_id = @userId
+        `,
+      )
+      .run({
+        noteId,
+        userId,
+        folderId,
+        updatedAt: new Date().toISOString(),
+      });
+  }
+
+  private findFolderByParentAndName(
+    userId: number,
+    parentId: number | null,
+    name: string,
+    excludeId?: number,
+  ): AttachmentFolderRecord | undefined {
+    const parentClause = parentId === null ? 'parent_id IS NULL' : 'parent_id = @parentId';
+    const excludeClause = excludeId !== undefined ? 'AND id != @excludeId' : '';
+    return this.databaseService.connection
+      .prepare(
+        `
+          SELECT *
+          FROM attachment_folders
+          WHERE user_id = @userId
+            AND ${parentClause}
+            AND lower(name) = lower(@name)
+            ${excludeClause}
+          LIMIT 1
+        `,
+      )
+      .get({ userId, parentId, name, excludeId }) as AttachmentFolderRecord | undefined;
+  }
+
+  private assertUniqueFolderName(
+    userId: number,
+    parentId: number | null,
+    name: string,
+    excludeId?: number,
+  ): void {
+    if (this.findFolderByParentAndName(userId, parentId, name, excludeId)) {
+      throw new ConflictException('A folder with this name already exists in this location');
+    }
+  }
+
+  private sanitizeFolderName(name: string): string {
+    const safeName = name.trim().replace(/[\\/:*?"<>|]/g, '_').slice(0, 120);
+    if (!safeName) {
+      throw new BadRequestException('Folder name is invalid');
+    }
+    return safeName;
   }
 
   private sanitizeAttachmentName(fileName: string): string {
@@ -780,17 +1268,70 @@ export class WorkspaceService {
   }
 
   private makeUniqueZipName(fileName: string, usedNames: Set<string>): string {
-    const safeName = this.sanitizeAttachmentName(fileName);
-    const extension = extname(safeName);
-    const baseName = extension ? safeName.slice(0, -extension.length) : safeName;
-    let candidate = safeName;
+    return this.makeUniqueZipPath(this.sanitizeAttachmentName(fileName), usedNames);
+  }
+
+  private makeUniqueZipPath(path: string, usedPaths: Set<string>): string {
+    const safePath = path
+      .replace(/\\/g, '/')
+      .split('/')
+      .map((segment) => this.sanitizeZipFolderSegment(segment))
+      .filter(Boolean)
+      .join('/');
+    if (!safePath) {
+      throw new BadRequestException('Archive path is invalid');
+    }
+
+    let candidate = safePath;
     let index = 2;
-    while (usedNames.has(candidate.toLowerCase())) {
-      candidate = `${baseName} (${index})${extension}`;
+    while (usedPaths.has(candidate.toLowerCase())) {
+      const segments = candidate.split('/');
+      const fileName = segments.pop() ?? 'file';
+      const directory = segments.join('/');
+      const extension = extname(fileName);
+      const baseName = extension ? fileName.slice(0, -extension.length) : fileName;
+      const nextFileName = `${baseName} (${index})${extension}`;
+      candidate = directory ? `${directory}/${nextFileName}` : nextFileName;
       index += 1;
     }
-    usedNames.add(candidate.toLowerCase());
+    usedPaths.add(candidate.toLowerCase());
     return candidate;
+  }
+
+  private sanitizeZipFolderSegment(segment: string): string {
+    const safeSegment = segment.trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ');
+    if (!safeSegment || safeSegment === '.' || safeSegment === '..') {
+      return 'folder';
+    }
+    return safeSegment;
+  }
+
+  private buildFolderAttachmentZipPath(
+    folderById: Map<number, AttachmentFolderResponse>,
+    rootFolder: AttachmentFolderResponse,
+    attachment: AttachmentRecord,
+  ): string {
+    const fileName = this.sanitizeAttachmentName(attachment.file_name);
+    const attachmentFolderId = attachment.folder_id;
+    if (attachmentFolderId === null || attachmentFolderId === rootFolder.id) {
+      return `${this.sanitizeZipFolderSegment(rootFolder.name)}/${fileName}`;
+    }
+
+    const innerSegments: string[] = [];
+    let currentId: number | null = attachmentFolderId ?? null;
+    while (currentId !== null && currentId !== rootFolder.id) {
+      const folder = folderById.get(currentId);
+      if (!folder) {
+        break;
+      }
+      innerSegments.unshift(this.sanitizeZipFolderSegment(folder.name));
+      currentId = folder.parentId;
+    }
+
+    const prefix = this.sanitizeZipFolderSegment(rootFolder.name);
+    return innerSegments.length > 0
+      ? `${prefix}/${innerSegments.join('/')}/${fileName}`
+      : `${prefix}/${fileName}`;
   }
 
   private createZip(entries: ZipEntry[]): Buffer {

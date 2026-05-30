@@ -158,7 +158,7 @@ export class AdminStatsService {
           INNER JOIN users ON users.id = attachments.user_id
           GROUP BY users.id
           ORDER BY storageBytes DESC, filesTotal DESC, users.username ASC
-          LIMIT 5
+          LIMIT 10
         `,
       )
       .all() as AdminStorageUser[];
@@ -176,7 +176,7 @@ export class AdminStatsService {
           LEFT JOIN users actor ON actor.id = activity_logs.actor_id
           GROUP BY COALESCE(target_user.username, actor.username, 'unknown')
           ORDER BY eventsTotal DESC, username ASC
-          LIMIT 5
+          LIMIT 10
         `,
       )
       .all() as AdminActivityUser[];
@@ -217,7 +217,7 @@ export class AdminStatsService {
           WHERE model IS NOT NULL AND trim(model) != ''
           GROUP BY model
           ORDER BY usersTotal DESC, lower(model) ASC
-          LIMIT 5
+          LIMIT 10
         `,
       )
       .all() as AdminAiModelStat[];

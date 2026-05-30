@@ -129,6 +129,18 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       CREATE INDEX IF NOT EXISTS idx_attachments_note ON attachments(note_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_attachments_user ON attachments(user_id, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS attachment_folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        parent_id INTEGER REFERENCES attachment_folders(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_attachment_folders_user
+        ON attachment_folders(user_id, parent_id, position, lower(name));
+
       CREATE TABLE IF NOT EXISTS share_links (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
@@ -521,6 +533,11 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     );
     this.ensureColumn('notes', 'delete_reason', 'ALTER TABLE notes ADD COLUMN delete_reason TEXT');
     this.ensureColumn(
+      'notes',
+      'attachment_folder_id',
+      'ALTER TABLE notes ADD COLUMN attachment_folder_id INTEGER REFERENCES attachment_folders(id) ON DELETE SET NULL',
+    );
+    this.ensureColumn(
       'share_links',
       'public_url',
       'ALTER TABLE share_links ADD COLUMN public_url TEXT',
@@ -536,6 +553,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       'ALTER TABLE share_links ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0',
     );
     this.ensureAttachmentsDetachOnNoteDelete();
+    this.ensureAttachmentFolders();
     this.dropRemovedColumn('users', 'totp_secret');
     this.dropRemovedColumn('users', 'totp_enabled');
     this.dropRemovedColumn('users', 'totp_recovery_codes_hash');
@@ -701,6 +719,31 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     } catch (caught) {
       this.logger.warn(`SQLite FTS5 is unavailable: ${(caught as Error).message}`);
     }
+  }
+
+  private ensureAttachmentFolders(): void {
+    this.connection.exec(`
+      CREATE TABLE IF NOT EXISTS attachment_folders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        parent_id INTEGER REFERENCES attachment_folders(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_attachment_folders_user
+        ON attachment_folders(user_id, parent_id, position, lower(name));
+    `);
+    this.ensureColumn(
+      'attachments',
+      'folder_id',
+      'ALTER TABLE attachments ADD COLUMN folder_id INTEGER REFERENCES attachment_folders(id) ON DELETE SET NULL',
+    );
+    this.connection.exec(`
+      CREATE INDEX IF NOT EXISTS idx_attachments_folder
+        ON attachments(user_id, folder_id, created_at DESC);
+    `);
   }
 
   private ensureAttachmentsDetachOnNoteDelete(): void {

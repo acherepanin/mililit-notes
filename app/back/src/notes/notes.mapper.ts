@@ -12,6 +12,7 @@ export function mapNote(record: NoteRecord, tags: string[] = []): NoteResponse {
     isFavorite: record.is_favorite === 1,
     isPinned: record.is_pinned === 1,
     tags,
+    attachmentFolderId: record.attachment_folder_id ?? null,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };

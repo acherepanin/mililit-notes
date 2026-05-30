@@ -18,6 +18,7 @@ export interface Note {
   isFavorite: boolean;
   isPinned: boolean;
   tags: string[];
+  attachmentFolderId: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -33,6 +34,7 @@ export interface UpdateNotePayload {
   contentText?: string;
   isFavorite?: boolean;
   isPinned?: boolean;
+  attachmentFolderId?: number | null;
 }
 
 import type { UserTheme } from './themes';
@@ -224,10 +226,19 @@ export interface NoteTemplate {
   updatedAt: string;
 }
 
+export interface AttachmentFolder {
+  id: number;
+  parentId: number | null;
+  name: string;
+  position: number;
+  createdAt: string;
+}
+
 export interface Attachment {
   id: number;
   noteId: number | null;
   noteName: string | null;
+  folderId?: number | null;
   fileName: string;
   mimeType: string;
   size: number;

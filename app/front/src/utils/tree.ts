@@ -78,6 +78,28 @@ export function getFirstNodeId(nodes: NoteTreeNode[]): number | null {
   return nodes[0]?.id ?? null;
 }
 
+export function flattenTreeInOrder(nodes: NoteTreeNode[]): number[] {
+  const ids: number[] = [];
+  const walk = (items: NoteTreeNode[]) => {
+    for (const node of items) {
+      ids.push(node.id);
+      walk(node.children);
+    }
+  };
+  walk(nodes);
+  return ids;
+}
+
 export function containsNodeId(nodes: NoteTreeNode[], id: number): boolean {
   return nodes.some((node) => node.id === id || containsNodeId(node.children, id));
+}
+
+export function pruneSelectedNoteIds(nodes: NoteTreeNode[], selectedIds: Set<number>): Set<number> {
+  const next = new Set<number>();
+  for (const id of selectedIds) {
+    if (containsNodeId(nodes, id)) {
+      next.add(id);
+    }
+  }
+  return next;
 }

@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, FileText, Pencil, Pin, Save, Star, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
 
 import { IconButton } from '../../components/IconButton';
 import { TooltipText } from '../../components/TooltipText';
@@ -9,10 +9,11 @@ import type { NoteTreeNode } from '../../types';
 interface NotesTreeProps {
   nodes: NoteTreeNode[];
   selectedId: number | null;
+  selectedIds: Set<number>;
   expanded: Set<number>;
   draggedId: number | null;
   onToggle: (id: number) => void;
-  onSelect: (id: number) => void;
+  onSelect: (id: number, event: Pick<MouseEvent, 'shiftKey' | 'ctrlKey' | 'metaKey'>) => void;
   onRename: (id: number, name: string) => void;
   onDelete: (id: number) => void;
   onDragStart: (id: number | null) => void;
@@ -24,6 +25,7 @@ interface NotesTreeProps {
 export function NotesTree({
   nodes,
   selectedId,
+  selectedIds,
   expanded,
   draggedId,
   onToggle,
@@ -63,6 +65,7 @@ export function NotesTree({
       const isExpanded = expanded.has(node.id);
       const hasChildren = node.children.length > 0;
       const isActive = selectedId === node.id;
+      const isSelected = selectedIds.has(node.id);
       const isEditing = editingId === node.id;
 
       return (
@@ -71,9 +74,12 @@ export function NotesTree({
           key={node.id}
           role="treeitem"
           aria-expanded={hasChildren ? isExpanded : undefined}
+          aria-selected={isSelected}
         >
           <div
-            className={`tree__row ${isActive ? 'tree__row--active' : ''} ${draggedId === node.id ? 'tree__row--dragging' : ''}`}
+            className={`tree__row ${isActive ? 'tree__row--active' : ''} ${
+              isSelected ? 'tree__row--selected' : ''
+            } ${draggedId === node.id ? 'tree__row--dragging' : ''}`}
             draggable={isDraggable && !isEditing}
             onDragStart={(event) => {
               if (!isDraggable || isEditing) {
@@ -129,7 +135,11 @@ export function NotesTree({
                 autoFocus
               />
             ) : (
-              <button className="tree__name" type="button" onClick={() => onSelect(node.id)}>
+              <button
+                className="tree__name"
+                type="button"
+                onClick={(event) => onSelect(node.id, event)}
+              >
                 <TooltipText value={node.name} />
               </button>
             )}
@@ -179,7 +189,7 @@ export function NotesTree({
     });
 
   return (
-    <ul className="tree" role="tree">
+    <ul className="tree" role="tree" aria-multiselectable="true">
       {renderNodes(nodes)}
     </ul>
   );

@@ -16,16 +16,21 @@ import {
 
 import { AuthGuard, type AuthenticatedRequest } from '../auth/auth.guard';
 import {
+  AttachmentFolderDto,
   CreateNoteFromTemplateDto,
   CreateShareLinkDto,
   AttachAttachmentDto,
+  DuplicateAttachmentDto,
   ImportNotesDto,
+  MoveAttachmentFolderDto,
+  MoveAttachmentFolderParentDto,
   RenameAttachmentDto,
   TemplateDto,
   UploadAttachmentDto,
 } from './dto/workspace.dto';
 import { WorkspaceService } from './workspace.service';
 import type {
+  AttachmentFolderResponse,
   AttachmentResponse,
   ExportResponse,
   NoteTemplateResponse,
@@ -51,6 +56,27 @@ function parseAttachmentIds(rawIds?: string): number[] {
     .split(',')
     .map((id) => Number(id.trim()))
     .filter((id) => Number.isInteger(id) && id > 0);
+}
+
+function parseFolderIds(rawIds?: string): number[] {
+  if (!rawIds) {
+    return [];
+  }
+  return rawIds
+    .split(',')
+    .map((id) => Number(id.trim()))
+    .filter((id) => Number.isInteger(id) && id > 0);
+}
+
+function parseFolderId(rawFolderId?: string): number | null | undefined {
+  if (rawFolderId === undefined) {
+    return undefined;
+  }
+  if (rawFolderId === '' || rawFolderId === 'root') {
+    return null;
+  }
+  const folderId = Number(rawFolderId);
+  return Number.isInteger(folderId) && folderId > 0 ? folderId : undefined;
 }
 
 @Controller()
@@ -119,9 +145,54 @@ export class WorkspaceController {
     return this.workspaceService.exportJson(request.user.id);
   }
 
+  @Get('attachment-folders')
+  listAttachmentFolders(@Req() request: AuthenticatedRequest): AttachmentFolderResponse[] {
+    return this.workspaceService.listAttachmentFolders(request.user.id);
+  }
+
+  @Post('attachment-folders')
+  createAttachmentFolder(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: AttachmentFolderDto,
+  ): AttachmentFolderResponse {
+    return this.workspaceService.createAttachmentFolder(request.user.id, dto);
+  }
+
+  @Patch('attachment-folders/:id')
+  renameAttachmentFolder(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AttachmentFolderDto,
+  ): AttachmentFolderResponse {
+    return this.workspaceService.renameAttachmentFolder(request.user.id, id, dto);
+  }
+
+  @Delete('attachment-folders/:id')
+  deleteAttachmentFolder(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+  ): { id: number } {
+    return this.workspaceService.deleteAttachmentFolder(request.user.id, id);
+  }
+
+  @Patch('attachment-folders/:id/parent')
+  moveAttachmentFolderParent(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MoveAttachmentFolderParentDto,
+  ): AttachmentFolderResponse {
+    return this.workspaceService.moveAttachmentFolder(request.user.id, id, dto);
+  }
+
   @Get('attachments')
-  listAccountAttachments(@Req() request: AuthenticatedRequest): AttachmentResponse[] {
-    return this.workspaceService.listAccountAttachments(request.user.id);
+  listAccountAttachments(
+    @Req() request: AuthenticatedRequest,
+    @Query('folderId') folderId?: string,
+  ): AttachmentResponse[] {
+    return this.workspaceService.listAccountAttachments(
+      request.user.id,
+      parseFolderId(folderId),
+    );
   }
 
   @Post('attachments')
@@ -136,11 +207,13 @@ export class WorkspaceController {
   downloadAccountAttachmentsArchive(
     @Req() request: AuthenticatedRequest,
     @Query('ids') ids: string | undefined,
+    @Query('folderIds') folderIds: string | undefined,
     @Res() response: DownloadResponse,
   ): void {
     const { fileName, content } = this.workspaceService.downloadAccountAttachmentsArchive(
       request.user.id,
       parseAttachmentIds(ids),
+      parseFolderIds(folderIds),
     );
     response.setHeader('Content-Type', 'application/zip');
     response.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
@@ -205,6 +278,24 @@ export class WorkspaceController {
     @Body() dto: AttachAttachmentDto,
   ): AttachmentResponse {
     return this.workspaceService.attachAttachmentToNote(request.user.id, id, dto);
+  }
+
+  @Patch('attachments/:id/folder')
+  moveAttachmentToFolder(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MoveAttachmentFolderDto,
+  ): AttachmentResponse {
+    return this.workspaceService.moveAttachmentToFolder(request.user.id, id, dto);
+  }
+
+  @Post('attachments/:id/duplicate')
+  duplicateAttachment(
+    @Req() request: AuthenticatedRequest,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: DuplicateAttachmentDto,
+  ): AttachmentResponse {
+    return this.workspaceService.duplicateAttachment(request.user.id, id, dto);
   }
 
   @Get('attachments/:id/download')

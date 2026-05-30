@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 interface TooltipProps {
@@ -8,16 +8,38 @@ interface TooltipProps {
   className?: string;
 }
 
+function hasVisibleLabel(label: ReactNode): boolean {
+  if (label === null || label === undefined || label === false) {
+    return false;
+  }
+  if (typeof label === 'string') {
+    return label.trim().length > 0;
+  }
+  return true;
+}
+
 export function Tooltip({ label, children, className = '' }: TooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [style, setStyle] = useState<React.CSSProperties>({});
   const anchorRef = useRef<HTMLSpanElement>(null);
   const tooltipRef = useRef<HTMLSpanElement>(null);
   const tooltipId = useId();
+  const canShow = hasVisibleLabel(label);
+
+  const close = useCallback(() => {
+    setIsOpen(false);
+  }, []);
+
+  const open = useCallback(() => {
+    if (canShow) {
+      setIsOpen(true);
+    }
+  }, [canShow]);
 
   const updatePosition = useCallback(() => {
     const anchor = anchorRef.current;
-    if (!anchor) {
+    if (!anchor || !anchor.isConnected) {
+      close();
       return;
     }
 
@@ -36,7 +58,7 @@ export function Tooltip({ label, children, className = '' }: TooltipProps) {
       top,
       transform: placement === 'up' ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
     });
-  }, []);
+  }, [close]);
 
   useLayoutEffect(() => {
     if (!isOpen) {
@@ -55,15 +77,66 @@ export function Tooltip({ label, children, className = '' }: TooltipProps) {
     };
   }, [isOpen, updatePosition]);
 
+  useEffect(
+    () => () => {
+      close();
+    },
+    [close],
+  );
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        close();
+        return;
+      }
+      if (anchorRef.current?.contains(target) || tooltipRef.current?.contains(target)) {
+        return;
+      }
+      close();
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        close();
+      }
+    };
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [close, isOpen]);
+
   return (
     <span
       className={`app-tooltip-anchor ${className}`}
       ref={anchorRef}
       aria-describedby={isOpen ? tooltipId : undefined}
-      onBlur={() => setIsOpen(false)}
-      onFocus={() => setIsOpen(Boolean(label))}
-      onPointerEnter={() => setIsOpen(Boolean(label))}
-      onPointerLeave={() => setIsOpen(false)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          close();
+        }
+      }}
+      onFocus={(event) => {
+        if (!canShow) {
+          return;
+        }
+        if (event.target instanceof HTMLElement && event.target.matches(':focus-visible')) {
+          open();
+        }
+      }}
+      onPointerEnter={open}
+      onPointerLeave={close}
+      onPointerDown={close}
+      onPointerCancel={close}
     >
       {children}
       {isOpen

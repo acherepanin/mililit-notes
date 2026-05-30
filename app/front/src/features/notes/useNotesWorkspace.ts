@@ -6,6 +6,7 @@ import {
   collectPinnedNodes,
   containsNodeId,
   countNotes,
+  pruneSelectedNoteIds,
   countTreeMatches,
   filterTree,
   getFirstNodeId,
@@ -34,6 +35,8 @@ export function useNotesWorkspace(isEnabled: boolean) {
   const [treeFilter, setTreeFilter] = useState<NoteTreeFilter>({ kind: 'all' });
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
   const [draggedId, setDraggedId] = useState<number | null>(null);
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<number>>(new Set());
+  const [lastSelectedNoteId, setLastSelectedNoteId] = useState<number | null>(null);
 
   const visibleTree = useMemo(() => filterTree(tree, query, treeFilter), [query, tree, treeFilter]);
   const totalNotes = useMemo(() => countNotes(tree), [tree]);
@@ -107,32 +110,118 @@ export function useNotesWorkspace(isEnabled: boolean) {
   }, [isEnabled, loadNote, selectedId, setActionError]);
 
   const selectNote = useCallback((id: number) => {
+    setSelectedNoteIds(new Set([id]));
+    setLastSelectedNoteId(id);
     setSelectedId(id);
     setMobileTreeOpen(false);
   }, []);
+
+  const clearNoteSelection = useCallback(() => {
+    setSelectedNoteIds(new Set());
+    setLastSelectedNoteId(null);
+  }, []);
+
+  const selectNoteItem = useCallback(
+    (
+      id: number,
+      flatOrder: number[],
+      modifiers: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean },
+    ) => {
+      const isMultiToggle = modifiers.ctrlKey || modifiers.metaKey;
+
+      if (modifiers.shiftKey && lastSelectedNoteId !== null) {
+        const start = flatOrder.indexOf(lastSelectedNoteId);
+        const end = flatOrder.indexOf(id);
+        if (start >= 0 && end >= 0) {
+          const [from, to] = start < end ? [start, end] : [end, start];
+          const next = isMultiToggle ? new Set(selectedNoteIds) : new Set<number>();
+          flatOrder.slice(from, to + 1).forEach((noteId) => next.add(noteId));
+          setSelectedNoteIds(next);
+          setLastSelectedNoteId(id);
+          setSelectedId(id);
+          setMobileTreeOpen(false);
+          return;
+        }
+      }
+
+      if (isMultiToggle) {
+        const wasSelected = selectedNoteIds.has(id);
+        const next = new Set(selectedNoteIds);
+        if (wasSelected) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+
+        setSelectedNoteIds(next);
+        setLastSelectedNoteId(id);
+
+        if (next.size === 0) {
+          setSelectedId(null);
+          setSelectedNote(null);
+          setDraft(emptyDraft);
+        } else if (wasSelected && selectedId === id) {
+          const fallbackId = [...next].at(-1) ?? null;
+          setSelectedId(fallbackId);
+          setMobileTreeOpen(false);
+        } else if (!wasSelected) {
+          setSelectedId(id);
+          setMobileTreeOpen(false);
+        }
+        return;
+      }
+
+      selectNote(id);
+    },
+    [lastSelectedNoteId, selectNote, selectedId, selectedNoteIds],
+  );
 
   const selectRoot = useCallback(() => {
     setSelectedId(null);
     setSelectedNote(null);
     setDraft(emptyDraft);
-  }, []);
+    clearNoteSelection();
+  }, [clearNoteSelection]);
 
   const reconcileSelection = useCallback(
     (nodes: NoteTreeNode[]) => {
-      if (selectedId !== null && containsNodeId(nodes, selectedId)) {
-        return selectedId;
+      let pruned = pruneSelectedNoteIds(nodes, selectedNoteIds);
+
+      let nextSelectedId = selectedId;
+      if (nextSelectedId === null || !containsNodeId(nodes, nextSelectedId)) {
+        nextSelectedId = pruned.size > 0 ? [...pruned].at(-1)! : getFirstNodeId(nodes);
       }
 
-      setSelectedId(null);
-      setSelectedNote(null);
-      setDraft(emptyDraft);
-      return null;
+      if (nextSelectedId === null) {
+        setSelectedNoteIds(new Set());
+        setLastSelectedNoteId(null);
+        setSelectedId(null);
+        setSelectedNote(null);
+        setDraft(emptyDraft);
+        return null;
+      }
+
+      if (!pruned.has(nextSelectedId)) {
+        pruned = new Set(pruned);
+        pruned.add(nextSelectedId);
+      }
+
+      setSelectedNoteIds(pruned);
+      if (nextSelectedId !== selectedId) {
+        setSelectedId(nextSelectedId);
+      }
+      return nextSelectedId;
     },
-    [selectedId],
+    [selectedId, selectedNoteIds],
   );
 
   const selectFirstNote = useCallback(() => {
-    setSelectedId((current) => current ?? getFirstNodeId(tree));
+    const nextId = getFirstNodeId(tree);
+    if (nextId !== null) {
+      setSelectedNoteIds(new Set([nextId]));
+      setLastSelectedNoteId(nextId);
+    }
+    setSelectedId((current) => current ?? nextId);
     setMobileTreeOpen(false);
   }, [tree]);
 
@@ -173,6 +262,8 @@ export function useNotesWorkspace(isEnabled: boolean) {
         next.add(parentId ?? note.id);
         return next;
       });
+      setSelectedNoteIds(new Set([note.id]));
+      setLastSelectedNoteId(note.id);
       setSelectedId(note.id);
       setStatus('saved');
     },
@@ -233,11 +324,15 @@ export function useNotesWorkspace(isEnabled: boolean) {
     setStatus('saving');
     setError(null);
     await notesApi.deleteNote(selectedNote.id);
-    setSelectedId(null);
-    setSelectedNote(null);
-    setDraft(emptyDraft);
     const nodes = await refreshTree();
-    setSelectedId(getFirstNodeId(nodes));
+    const nextSelectedId = getFirstNodeId(nodes);
+    setSelectedNoteIds(nextSelectedId !== null ? new Set([nextSelectedId]) : new Set());
+    setLastSelectedNoteId(nextSelectedId);
+    setSelectedId(nextSelectedId);
+    if (nextSelectedId === null) {
+      setSelectedNote(null);
+      setDraft(emptyDraft);
+    }
     setStatus('saved');
   }, [refreshTree, selectedNote]);
 
@@ -246,11 +341,21 @@ export function useNotesWorkspace(isEnabled: boolean) {
       setStatus('saving');
       setError(null);
       await notesApi.deleteNote(id);
+      setSelectedNoteIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
       const nodes = await refreshTree();
+      const pruned = pruneSelectedNoteIds(nodes, selectedNoteIds);
+      setSelectedNoteIds(pruned);
+
       const nextSelectedId =
         selectedId !== null && containsNodeId(nodes, selectedId)
           ? selectedId
-          : getFirstNodeId(nodes);
+          : pruned.size > 0
+            ? [...pruned].at(-1)!
+            : getFirstNodeId(nodes);
 
       if (nextSelectedId !== selectedId) {
         setSelectedNote(null);
@@ -258,9 +363,37 @@ export function useNotesWorkspace(isEnabled: boolean) {
       }
 
       setSelectedId(nextSelectedId);
+      if (nextSelectedId !== null && !pruned.has(nextSelectedId)) {
+        setSelectedNoteIds(new Set([nextSelectedId]));
+      }
       setStatus('saved');
     },
-    [refreshTree, selectedId],
+    [refreshTree, selectedId, selectedNoteIds],
+  );
+
+  const deleteNotes = useCallback(
+    async (ids: number[]) => {
+      if (ids.length === 0) {
+        return;
+      }
+
+      setStatus('saving');
+      setError(null);
+      for (const id of ids) {
+        await notesApi.deleteNote(id);
+      }
+      const nodes = await refreshTree();
+      const nextSelectedId = getFirstNodeId(nodes);
+      setSelectedNoteIds(nextSelectedId !== null ? new Set([nextSelectedId]) : new Set());
+      setLastSelectedNoteId(nextSelectedId);
+      setSelectedId(nextSelectedId);
+      if (nextSelectedId === null) {
+        setSelectedNote(null);
+        setDraft(emptyDraft);
+      }
+      setStatus('saved');
+    },
+    [refreshTree],
   );
 
   const moveDraggedNote = useCallback(
@@ -295,6 +428,7 @@ export function useNotesWorkspace(isEnabled: boolean) {
     pinnedNodes,
     mobileTreeOpen,
     draggedId,
+    selectedNoteIds,
     totalNotes,
     setQuery,
     setTreeFilter,
@@ -306,6 +440,8 @@ export function useNotesWorkspace(isEnabled: boolean) {
     reconcileSelection,
     setActionError,
     selectNote,
+    selectNoteItem,
+    clearNoteSelection,
     selectRoot,
     selectFirstNote,
     toggleExpanded,
@@ -316,6 +452,7 @@ export function useNotesWorkspace(isEnabled: boolean) {
     saveCurrentNote,
     deleteCurrentNote,
     deleteNote,
+    deleteNotes,
     moveDraggedNote,
   };
 }

@@ -192,7 +192,7 @@ export class NotesService {
     this.createVersion(existing);
 
     const fields: string[] = ['updated_at = @updatedAt'];
-    const params: Record<string, string | number> = {
+    const params: Record<string, string | number | null> = {
       id,
       userId,
       updatedAt: new Date().toISOString(),
@@ -221,6 +221,21 @@ export class NotesService {
     if (dto.isPinned !== undefined) {
       fields.push('is_pinned = @isPinned');
       params.isPinned = dto.isPinned ? 1 : 0;
+    }
+
+    if (dto.attachmentFolderId !== undefined) {
+      if (dto.attachmentFolderId !== null) {
+        const folder = this.databaseService.connection
+          .prepare(
+            'SELECT id FROM attachment_folders WHERE id = @folderId AND user_id = @userId',
+          )
+          .get({ folderId: dto.attachmentFolderId, userId }) as { id: number } | undefined;
+        if (!folder) {
+          throw new NotFoundException(`Folder ${dto.attachmentFolderId} was not found`);
+        }
+      }
+      fields.push('attachment_folder_id = @attachmentFolderId');
+      params.attachmentFolderId = dto.attachmentFolderId;
     }
 
     this.databaseService.connection
@@ -299,6 +314,7 @@ export class NotesService {
         `,
       )
       .run({ id, userId, deletedAt });
+    this.detachAttachments(userId, [id]);
     this.removeFts(id);
     this.activityService.record({
       actorId: userId,
@@ -326,6 +342,7 @@ export class NotesService {
     const noteIdList = bindSqlList('noteId', noteIds);
     const transaction = this.databaseService.connection.transaction(() => {
       this.deleteVersions(userId, noteIds);
+      this.detachAttachments(userId, noteIds);
       this.databaseService.connection
         .prepare(
           `
