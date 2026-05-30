@@ -1,6 +1,6 @@
 import { IsIn, IsOptional } from 'class-validator';
 
-import type { UserLanguage, UserTheme } from '../auth.types';
+import { USER_THEME_VALUES, type UserLanguage, type UserTheme } from '../auth.types';
 
 export class UpdatePreferencesDto {
   @IsOptional()
@@ -8,6 +8,6 @@ export class UpdatePreferencesDto {
   language?: UserLanguage;
 
   @IsOptional()
-  @IsIn(['light', 'dark'])
+  @IsIn([...USER_THEME_VALUES])
   theme?: UserTheme;
 }

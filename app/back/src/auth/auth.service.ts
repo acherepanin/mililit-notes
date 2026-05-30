@@ -5,7 +5,14 @@ import { ActivityService } from '../activity/activity.service';
 import { readPositiveInteger } from '../config/env';
 import { DatabaseService } from '../infra/database.service';
 import { verifyPassword } from './password';
-import type { AuthUser, TokenPayload, UserLanguage, UserRecord, UserTheme } from './auth.types';
+import {
+  USER_THEME_VALUES,
+  type AuthUser,
+  type TokenPayload,
+  type UserLanguage,
+  type UserRecord,
+  type UserTheme,
+} from './auth.types';
 import type { LoginDto } from './dto/login.dto';
 import type { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { createSignedToken, readSignedToken } from './token';
@@ -120,12 +127,16 @@ export class AuthService {
   }
 
   private mapUser(user: UserRecord): AuthUser {
+    const theme = USER_THEME_VALUES.includes(user.theme as UserTheme)
+      ? (user.theme as UserTheme)
+      : 'dark';
+
     return {
       id: user.id,
       username: user.username,
       role: user.role,
       language: user.language,
-      theme: user.theme,
+      theme,
       lastLoginAt: user.last_login_at,
     };
   }

@@ -5,13 +5,12 @@ import {
   Files,
   Languages,
   Link2,
-  Moon,
+  Palette,
   PanelLeft,
   Save,
   Search,
   Settings,
   ShieldCheck,
-  Sun,
   Tags,
   Trash2,
   Undo2,
@@ -19,7 +18,7 @@ import {
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { aiApi, notesApi, workspaceApi } from '../../api';
-import { AmbientCubes } from '../../components/AmbientCubes';
+import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import { Modal } from '../../components/Modal';
 import { RichTextToolbar } from '../../editor/RichTextToolbar';
@@ -28,6 +27,7 @@ import { EditorLinkTooltip } from '../../editor/EditorLinkTooltip';
 import { formatCurrentCodeBlock } from '../../editor/editorCode';
 import { useNotebookEditor } from '../../editor/useNotebookEditor';
 import type { Translator } from '../../i18n';
+import { getNextTheme } from '../../themes';
 import type { AiSettings, AuthUser, Tag, UserLanguage, UserTheme } from '../../types';
 import type { ToastKind } from '../../components/useToasts';
 import { escapeHtml } from '../../utils/html';
@@ -600,8 +600,8 @@ export default function AuthenticatedApp({
         label: t('shortcutTheme'),
         description: t('commandThemeDesc'),
         shortcut: 'Ctrl Alt T',
-        icon: theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />,
-        run: () => onThemeChange(theme === 'dark' ? 'light' : 'dark'),
+        icon: <Palette size={15} />,
+        run: () => onThemeChange(getNextTheme(theme)),
       },
       {
         id: 'language',
@@ -688,7 +688,7 @@ export default function AuthenticatedApp({
         onDragStart={workspace.setDraggedId}
         onDropNode={dropDraggedNote}
         onLanguageToggle={() => onLanguageChange(language === 'ru' ? 'en' : 'ru')}
-        onThemeToggle={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
+        onThemeChange={onThemeChange}
         onExportJson={exportJsonFile}
         onImportJson={importJsonFile}
         onOpenTrash={openTrashModal}
@@ -701,9 +701,8 @@ export default function AuthenticatedApp({
       <section
         className={`workspace ${activeView === 'admin' && user.role === 'admin' ? 'workspace--admin' : ''}`}
       >
-        <AmbientCubes area="workspace" />
         {activeView === 'admin' && user.role === 'admin' ? (
-          <Suspense fallback={<div className="empty-editor">{t('loading')}</div>}>
+          <Suspense fallback={<EmptyState title={t('loading')} tone="plain" className="empty-editor" />}>
             <AdminPanel
               currentUserId={user.id}
               t={t}
@@ -756,7 +755,13 @@ export default function AuthenticatedApp({
               {workspace.selectedNote ? (
                 <EditorContent editor={editor} />
               ) : (
-                <div className="empty-editor">{t('emptyEditor')}</div>
+                <EmptyState
+                  className="empty-editor"
+                  title={t('emptyEditor')}
+                  hint={t('emptyEditorHint')}
+                  actionLabel={t('createNote')}
+                  onAction={() => createDefaultNote(null)}
+                />
               )}
             </section>
             <EditorLinkTooltip containerRef={editorWrapRef} isEditing={isEditorEditing} />

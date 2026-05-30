@@ -82,8 +82,11 @@ export function PublicSharePage({ token, t }: PublicSharePageProps) {
       ) : null}
 
       {!isLoading && isUnavailable ? (
-        <section className="public-share-state">
-          <FileWarning size={26} />
+        <section className="public-share-state" aria-labelledby="public-share-error-title">
+          <FileWarning size={26} aria-hidden />
+          <h1 id="public-share-error-title" className="public-share-state__title">
+            {t('publicShareUnavailableTitle')}
+          </h1>
           <p>{t('publicShareUnavailable')}</p>
         </section>
       ) : null}

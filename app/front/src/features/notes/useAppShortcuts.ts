@@ -2,6 +2,7 @@ import type { Editor } from '@tiptap/react';
 import { useEffect, useMemo } from 'react';
 
 import type { Translator } from '../../i18n';
+import { getNextTheme } from '../../themes';
 import type { UserLanguage, UserTheme } from '../../types';
 
 export interface ShortcutItem {
@@ -164,7 +165,7 @@ export function useAppShortcuts({
 
       if (event.altKey && code === 'KeyT') {
         event.preventDefault();
-        updateTheme(theme === 'dark' ? 'light' : 'dark');
+        updateTheme(getNextTheme(theme));
         return;
       }
 

@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { authApi, setApiToken } from '../../api';
+import { parseUserTheme } from '../../themes';
 import type { AuthUser, UserLanguage, UserTheme } from '../../types';
+
+function normalizeUser(user: AuthUser): AuthUser {
+  return {
+    ...user,
+    theme: parseUserTheme(user.theme),
+  };
+}
 
 const tokenStorageKey = 'notes.auth.token';
 
@@ -29,7 +37,7 @@ export function useAuth() {
     setIsChecking(true);
     authApi
       .getMe()
-      .then(setUser)
+      .then((nextUser) => setUser(normalizeUser(nextUser)))
       .catch(() => {
         setToken(null);
         setUser(null);
@@ -41,8 +49,9 @@ export function useAuth() {
     const response = await authApi.login(username, password);
     setApiToken(response.token);
     setToken(response.token);
-    setUser(response.user);
-    return response.user;
+    const nextUser = normalizeUser(response.user);
+    setUser(nextUser);
+    return nextUser;
   }, []);
 
   const logout = useCallback(() => {
@@ -53,7 +62,7 @@ export function useAuth() {
 
   const updatePreferences = useCallback(
     async (payload: { language?: UserLanguage; theme?: UserTheme }) => {
-      const nextUser = await authApi.updatePreferences(payload);
+      const nextUser = normalizeUser(await authApi.updatePreferences(payload));
       setUser(nextUser);
       return nextUser;
     },

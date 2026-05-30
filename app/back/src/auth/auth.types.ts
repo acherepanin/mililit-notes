@@ -1,5 +1,7 @@
 export type UserLanguage = 'ru' | 'en';
-export type UserTheme = 'light' | 'dark';
+export const USER_THEME_VALUES = ['dark', 'light', 'aurora', 'ember', 'ocean'] as const;
+
+export type UserTheme = (typeof USER_THEME_VALUES)[number];
 export type UserRole = 'user' | 'admin';
 
 export interface UserRecord {

@@ -7,6 +7,7 @@ import { LoginScreen } from './features/auth/LoginScreen';
 import { useAuth } from './features/auth/useAuth';
 import { PublicSharePage } from './features/share/PublicSharePage';
 import { createTranslator } from './i18n';
+import { parseUserTheme } from './themes';
 import type { UserLanguage, UserTheme } from './types';
 
 const AuthenticatedApp = lazy(() => import('./features/app/AuthenticatedApp'));
@@ -34,11 +35,11 @@ export function App() {
   const [guestLanguage, setGuestLanguage] = useState<UserLanguage>(
     () => (localStorage.getItem(guestLanguageKey) as UserLanguage) || 'ru',
   );
-  const [guestTheme, setGuestTheme] = useState<UserTheme>(
-    () => (localStorage.getItem(guestThemeKey) as UserTheme) || 'dark',
+  const [guestTheme, setGuestTheme] = useState<UserTheme>(() =>
+    parseUserTheme(localStorage.getItem(guestThemeKey)),
   );
   const language = auth.user?.language ?? guestLanguage;
-  const theme = auth.user?.theme ?? guestTheme;
+  const theme = parseUserTheme(auth.user?.theme, guestTheme);
   const t = useMemo(() => createTranslator(language), [language]);
   const publicShareToken = useMemo(() => readPublicShareToken(), []);
 

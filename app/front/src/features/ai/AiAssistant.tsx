@@ -1375,27 +1375,21 @@ export function AiAssistant({
       ) : null}
 
       {settings?.enabled ? (
-        <div className="ai-assistant__orb">
-          <span className="ai-assistant__particle ai-assistant__particle--a" />
-          <span className="ai-assistant__particle ai-assistant__particle--b" />
-          <span className="ai-assistant__particle ai-assistant__particle--c" />
-          <span className="ai-assistant__particle ai-assistant__particle--d" />
-          <IconButton
-            label={t('aiAssistant')}
-            icon={<BrainCircuit size={20} />}
-            variant="primary"
-            className={`ai-assistant__fab ${panelMode ? 'ai-assistant__fab--active' : ''}`}
-            onClick={() => {
-              if (isSettingsOpen) {
-                onSettingsOpenChange(false);
-                setIsChatOpen(true);
-                return;
-              }
+        <IconButton
+          label={t('aiAssistant')}
+          icon={<BrainCircuit size={20} />}
+          variant="primary"
+          className={`ai-assistant__fab ${panelMode ? 'ai-assistant__fab--active' : ''}`}
+          onClick={() => {
+            if (isSettingsOpen) {
+              onSettingsOpenChange(false);
+              setIsChatOpen(true);
+              return;
+            }
 
-              setIsChatOpen((current) => !current);
-            }}
-          />
-        </div>
+            setIsChatOpen((current) => !current);
+          }}
+        />
       ) : null}
     </div>
   );

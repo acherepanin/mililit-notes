@@ -1,0 +1,186 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-05-29T17:59:25.6710330+03:00",
+  "title": "Design System: Notes",
+  "extensions": {
+    "colorMeta": {
+      "bg-dark": {
+        "role": "neutral",
+        "displayName": "Graphite Workspace",
+        "canonical": "#0b1220",
+        "tonalRamp": ["oklch(15% 0.03 260)", "oklch(24% 0.035 260)", "oklch(34% 0.035 260)", "oklch(44% 0.03 260)", "oklch(56% 0.025 260)", "oklch(70% 0.02 260)", "oklch(84% 0.015 260)", "oklch(95% 0.01 260)"]
+      },
+      "bg-light": {
+        "role": "neutral",
+        "displayName": "Cool Paper",
+        "canonical": "#f4f8fc",
+        "tonalRamp": ["oklch(16% 0.02 245)", "oklch(28% 0.025 245)", "oklch(40% 0.025 245)", "oklch(55% 0.02 245)", "oklch(70% 0.017 245)", "oklch(82% 0.014 245)", "oklch(91% 0.012 245)", "oklch(97% 0.009 245)"]
+      },
+      "accent-dark": {
+        "role": "primary",
+        "displayName": "Daily Blue",
+        "canonical": "#159dff",
+        "tonalRamp": ["oklch(18% 0.08 250)", "oklch(30% 0.12 250)", "oklch(42% 0.16 250)", "oklch(55% 0.18 250)", "oklch(67% 0.19 250)", "oklch(78% 0.14 250)", "oklch(88% 0.08 250)", "oklch(96% 0.035 250)"]
+      },
+      "accent-cyan": {
+        "role": "secondary",
+        "displayName": "Signal Cyan",
+        "canonical": "#37e6ff",
+        "tonalRamp": ["oklch(18% 0.07 215)", "oklch(30% 0.1 215)", "oklch(43% 0.13 215)", "oklch(56% 0.15 215)", "oklch(70% 0.14 215)", "oklch(82% 0.1 215)", "oklch(91% 0.06 215)", "oklch(97% 0.025 215)"]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Compact Title",
+        "purpose": "Panel titles, modal headings, active note labels, and admin headers."
+      },
+      "body": {
+        "displayName": "UI Body",
+        "purpose": "Default product copy, form text, and settings content."
+      },
+      "label": {
+        "displayName": "Dense Label",
+        "purpose": "Controls, table labels, filters, and metadata."
+      },
+      "mono": {
+        "displayName": "Technical Mono",
+        "purpose": "Code, copied fields, and technical values."
+      }
+    },
+    "shadows": [
+      {
+        "name": "layout-shadow",
+        "value": "1px 0 0 rgb(7 12 22 / 28%), 0 1px 0 rgb(7 12 22 / 26%), 3px 3px 5px rgb(7 12 22 / 18%)",
+        "purpose": "Separates the sidebar and workspace from the body."
+      },
+      {
+        "name": "flat-default",
+        "value": "none",
+        "purpose": "Default component elevation for buttons, cards, controls, dropdowns, and stats surfaces."
+      }
+    ],
+    "motion": [
+      {
+        "name": "speed-standard",
+        "value": "240ms",
+        "purpose": "Default state transition speed."
+      },
+      {
+        "name": "speed-slow",
+        "value": "340ms",
+        "purpose": "Panel entrance and larger surface transition speed."
+      },
+      {
+        "name": "ease-product",
+        "value": "cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "purpose": "Default product easing for responsive state changes."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile-shell",
+        "value": "820px"
+      },
+      {
+        "name": "narrow-admin",
+        "value": "520px"
+      },
+      {
+        "name": "tablet-stats",
+        "value": "1120px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "Default square icon action with tooltip label.",
+      "html": "<button class=\"ds-icon-button\" type=\"button\" aria-label=\"Save\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/><path d=\"M17 21v-8H7v8M7 3v5h8\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"/></svg></button>",
+      "css": ".ds-icon-button { display: inline-grid; width: 31px; height: 31px; place-items: center; border: 1px solid color-mix(in srgb, var(--line-strong, #7a5cff) 54%, transparent); border-radius: 8px; padding: 0; background: color-mix(in srgb, var(--panel-2, #121b2d) 66%, transparent); color: var(--icon-ink, #f2fbff); transition: opacity 240ms ease, border-color 240ms ease, background 240ms ease, color 240ms ease; } .ds-icon-button svg { width: 17px; height: 17px; } .ds-icon-button:hover, .ds-icon-button:focus-visible { border-color: color-mix(in srgb, var(--accent, #159dff) 30%, transparent); background: color-mix(in srgb, var(--accent, #159dff) 9%, var(--panel-2, #121b2d)); color: var(--accent-2, #37e6ff); }"
+    },
+    {
+      "name": "Primary Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button-primary",
+      "description": "Primary square action for save, confirm, and major tool commands.",
+      "html": "<button class=\"ds-icon-button ds-icon-button--primary\" type=\"button\" aria-label=\"Confirm\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M20 6 9 17l-5-5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.25\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-icon-button { display: inline-grid; width: 31px; height: 31px; place-items: center; border: 1px solid color-mix(in srgb, var(--line-strong, #7a5cff) 54%, transparent); border-radius: 8px; padding: 0; background: color-mix(in srgb, var(--panel-2, #121b2d) 66%, transparent); color: var(--icon-ink, #f2fbff); transition: opacity 240ms ease, border-color 240ms ease, background 240ms ease, color 240ms ease; } .ds-icon-button--primary { border-color: color-mix(in srgb, var(--accent, #159dff) 34%, transparent); background: color-mix(in srgb, var(--accent, #159dff) 78%, var(--panel-2, #121b2d)); color: var(--icon-ink-strong, #ffffff); } .ds-icon-button svg { width: 17px; height: 17px; } .ds-icon-button--primary:hover, .ds-icon-button--primary:focus-visible { border-color: color-mix(in srgb, var(--accent, #159dff) 44%, transparent); background: color-mix(in srgb, var(--accent, #159dff) 88%, var(--panel-2, #121b2d)); }"
+    },
+    {
+      "name": "Field Shell",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Compact icon-led text field for login, search, settings, and filters.",
+      "html": "<label class=\"ds-field\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"m21 21-4.3-4.3M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"/></svg><input placeholder=\"Search notes\" autocomplete=\"off\" /></label>",
+      "css": ".ds-field { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 38px; border: 1px solid rgb(255 255 255 / 19%); border-radius: 8px; padding: 0 10px; background: rgb(255 255 255 / 9%); color: var(--muted, #97a9d0); } .ds-field svg { width: 17px; height: 17px; color: color-mix(in srgb, var(--accent, #159dff) 72%, var(--text, #f4f7ff)); } .ds-field input { min-width: 0; border: 0; background: transparent; color: var(--text, #f4f7ff); font: inherit; outline: 0; } .ds-field:focus-within { border-color: color-mix(in srgb, var(--accent, #159dff) 42%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent, #159dff) 7%, transparent); }"
+    },
+    {
+      "name": "Surface Panel",
+      "kind": "card",
+      "refersTo": "surface-panel",
+      "description": "Default tonal container for workspace panels, settings groups, and repeated admin surfaces.",
+      "html": "<section class=\"ds-panel\"><header><strong>Workspace</strong><span>Ready</span></header><p>Compact content sits on a cool tonal surface with no decorative shadow.</p></section>",
+      "css": ".ds-panel { display: grid; gap: 10px; border: 1px solid color-mix(in srgb, var(--accent, #159dff) 18%, var(--line, rgb(68 145 255 / 20%))); border-radius: 12px; padding: 12px; background: color-mix(in srgb, var(--panel-2, #121b2d) 82%, var(--accent, #159dff) 8%); color: var(--text, #f4f7ff); box-shadow: none; } .ds-panel header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; } .ds-panel strong { font-size: 1rem; line-height: 1.2; } .ds-panel span, .ds-panel p { margin: 0; color: var(--muted, #97a9d0); font-size: 0.78rem; }"
+    },
+    {
+      "name": "Select Option",
+      "kind": "custom",
+      "description": "Portal dropdown option vocabulary for CustomSelect menus.",
+      "html": "<button class=\"ds-select-option ds-select-option--selected\" type=\"button\"><span>Dark theme</span><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M20 6 9 17l-5-5\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.25\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg></button>",
+      "css": ".ds-select-option { display: grid; grid-template-columns: minmax(0, 1fr) 16px; align-items: center; gap: 7px; min-height: 31px; border: 1px solid transparent; border-radius: 8px; padding: 0 8px; background: color-mix(in srgb, var(--panel-2, #121b2d) 68%, transparent); color: var(--text, #f4f7ff); text-align: left; transition: border-color 240ms ease, background 240ms ease, color 240ms ease; } .ds-select-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-select-option:hover, .ds-select-option:focus-visible, .ds-select-option--selected { border-color: color-mix(in srgb, var(--accent, #159dff) 30%, transparent); background: color-mix(in srgb, var(--accent, #159dff) 12%, var(--panel-2, #121b2d)); color: var(--accent-2, #37e6ff); } .ds-select-option svg { width: 14px; height: 14px; justify-self: center; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Trusted Daily Workspace",
+    "overview": "Notes is a product UI first: a calm, modern workspace that makes daily writing, retrieval, admin, and AI-assisted actions feel dependable. The system uses cool near-black or near-white surfaces, precise blue accents, compact typography, and small-radius controls to support focused work without becoming dry or corporate.\n\nThe visual system is premium through restraint: clean tonal layers, sharp icon affordances, custom dropdowns, portal tooltips, controlled animation, and consistent state language. Marketing, public share, pricing, and landing surfaces may carry more emotion and motion, but the authenticated app should keep the task in front.",
+    "keyCharacteristics": [
+      "Compact, readable, and task-focused.",
+      "Cool blue identity with cyan energy, used for state and action.",
+      "Flat-by-default surfaces with tonal layering instead of decorative shadow.",
+      "Icon-led controls with custom tooltips and accessible labels.",
+      "Motion that confirms state, never constant movement."
+    ],
+    "rules": [
+      {
+        "name": "The Blue Earns Attention Rule",
+        "body": "Blue marks actions, focus, selection, and live state. Do not spend it on decorative filler.",
+        "section": "colors"
+      },
+      {
+        "name": "The No AI Startup Palette Rule",
+        "body": "Do not turn violet, magenta, cyan, and glow into a purple-gradient AI brand. Notes must keep its own cool workspace identity.",
+        "section": "colors"
+      },
+      {
+        "name": "The Product Scale Rule",
+        "body": "Do not use hero-sized fluid headings inside the app. Product screens use fixed rem sizes so dense layouts remain stable.",
+        "section": "typography"
+      },
+      {
+        "name": "The Structural Shadow Rule",
+        "body": "Shadows separate major layout regions only. Component depth should come from color, border, and state.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep working screens calm, compact, and task-focused.",
+      "Do use the existing blue/cyan accent vocabulary for action, selection, focus, and status.",
+      "Do use custom IconButton, Tooltip, TooltipText, CustomSelect, Modal, and ToastHost patterns instead of native browser UI for product controls.",
+      "Do support RU/EN strings by allowing ellipsis, tooltips, and stable control widths.",
+      "Do make motion expressive for transitions, loading, success, and state feedback, with prefers-reduced-motion support.",
+      "Do keep marketing, landing, pricing, and public conversion pages bolder than the authenticated workspace."
+    ],
+    "donts": [
+      "Don't use purple gradient branding, decorative orbs, neon glow, Powered by AI framing, or pseudo-chat as the default screen.",
+      "Don't make the product look like a generic 2024 AI/SaaS startup.",
+      "Don't use dry corporate admin templates that make the app feel under-designed.",
+      "Don't push command-center aesthetics into everyday note work.",
+      "Don't use colored border-left or border-right stripes wider than 1px on cards, callouts, or list items.",
+      "Don't use gradient text.",
+      "Don't use native alert, prompt, confirm, native title, or browser selects in the app UI.",
+      "Don't let decorative motion run constantly or ignore prefers-reduced-motion."
+    ]
+  }
+}

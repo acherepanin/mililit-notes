@@ -1,8 +1,9 @@
 import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { IconButton } from './IconButton';
+import { useFocusTrap } from './useFocusTrap';
 
 interface ModalProps {
   isOpen: boolean;
@@ -23,6 +24,10 @@ export function Modal({
 }: ModalProps) {
   const [shouldRender, setShouldRender] = useState(isOpen);
   const [isClosing, setIsClosing] = useState(false);
+  const panelRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+
+  useFocusTrap(isOpen && shouldRender, panelRef);
 
   useEffect(() => {
     if (isOpen) {
@@ -72,11 +77,12 @@ export function Modal({
         className={`modal-panel ${panelClassName}`}
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-labelledby={titleId}
+        ref={panelRef}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="modal-panel__head">
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           <IconButton label={closeLabel} icon={<X size={16} />} onClick={onClose} />
         </header>
         {children}

@@ -35,9 +35,11 @@ export interface UpdateNotePayload {
   isPinned?: boolean;
 }
 
+import type { UserTheme } from './themes';
+
+export type { UserTheme };
 export type SaveStatus = 'idle' | 'loading' | 'saving' | 'saved' | 'error';
 export type UserLanguage = 'ru' | 'en';
-export type UserTheme = 'light' | 'dark';
 export type UserRole = 'user' | 'admin';
 export type NoteTreeFilter = { kind: 'all' } | { kind: 'favorite' } | { kind: 'tag'; tag: string };
 

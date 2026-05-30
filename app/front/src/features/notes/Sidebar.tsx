@@ -1,7 +1,6 @@
 import {
   ArrowLeftToLine,
   BrainCircuit,
-  Check,
   ChevronDown,
   Download,
   FilePlus2,
@@ -9,33 +8,28 @@ import {
   ListTree,
   LogOut,
   Menu,
-  Moon,
   NotebookText,
   Paperclip,
   Search,
   Shield,
   Star,
-  Sun,
   Tags,
   Trash2,
   Upload,
 } from 'lucide-react';
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useId, useMemo, useRef, useState } from 'react';
 
-import { AmbientCubes } from '../../components/AmbientCubes';
+import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
+import { PortalListbox } from '../../components/PortalListbox';
+import { SettingsMenuItem } from '../../components/SettingsMenuItem';
 import { Tooltip } from '../../components/Tooltip';
 import { TooltipText } from '../../components/TooltipText';
+import { usePortalMenu } from '../../components/usePortalMenu';
 import type { Translator } from '../../i18n';
-import type {
-  NoteTreeFilter,
-  NoteTreeNode,
-  SaveStatus,
-  UserLanguage,
-  UserTheme,
-} from '../../types';
+import type { NoteTreeFilter, NoteTreeNode, SaveStatus, UserLanguage, UserTheme } from '../../types';
 import { NotesTree } from './NotesTree';
+import { SidebarThemePicker } from './SidebarThemePicker';
 
 interface SidebarSettingsMenuProps {
   language: UserLanguage;
@@ -51,7 +45,7 @@ interface SidebarSettingsMenuProps {
   onOpenTrash: () => void;
   onOpenGlobalAttachments: () => void;
   onLanguageToggle: () => void;
-  onThemeToggle: () => void;
+  onThemeChange: (theme: UserTheme) => void;
   aiEnabled: boolean;
   onAiToggle: () => void;
 }
@@ -70,12 +64,11 @@ function SidebarSettingsMenu({
   onOpenTrash,
   onOpenGlobalAttachments,
   onLanguageToggle,
-  onThemeToggle,
+  onThemeChange,
   aiEnabled,
   onAiToggle,
 }: SidebarSettingsMenuProps) {
   const languageValue = language === 'ru' ? 'RU' : 'EN';
-  const themeValue = theme === 'dark' ? t('dark') : t('light');
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   return (
@@ -161,46 +154,21 @@ function SidebarSettingsMenu({
       </div>
       <div className="sidebar-settings-menu__group" role="group" aria-label={t('settings')}>
         <span className="sidebar-settings-menu__label">{t('settings')}</span>
-        <button
-          className={`sidebar-settings-menu__item ${aiEnabled ? 'sidebar-settings-menu__item--active' : ''}`}
-          type="button"
-          role="menuitem"
-          aria-pressed={aiEnabled}
+        <SettingsMenuItem
+          icon={<BrainCircuit size={14} />}
+          label={t('aiAssistant')}
+          value={aiEnabled ? t('aiEnabledShort') : t('aiDisabledShort')}
+          active={aiEnabled}
+          ariaPressed={aiEnabled}
           onClick={onAiToggle}
-        >
-          <BrainCircuit size={14} />
-          <TooltipText value={t('aiAssistant')} className="sidebar-settings-menu__text" />
-          <strong>
-            <TooltipText
-              value={aiEnabled ? t('aiEnabledShort') : t('aiDisabledShort')}
-              className="sidebar-settings-menu__value"
-            />
-          </strong>
-        </button>
-        <button
-          className="sidebar-settings-menu__item"
-          type="button"
-          role="menuitem"
-          onClick={onThemeToggle}
-        >
-          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-          <TooltipText value={t('theme')} className="sidebar-settings-menu__text" />
-          <strong>
-            <TooltipText value={themeValue} className="sidebar-settings-menu__value" />
-          </strong>
-        </button>
-        <button
-          className="sidebar-settings-menu__item"
-          type="button"
-          role="menuitem"
+        />
+        <SidebarThemePicker theme={theme} t={t} onThemeChange={onThemeChange} />
+        <SettingsMenuItem
+          icon={<Languages size={14} />}
+          label={t('language')}
+          value={languageValue}
           onClick={onLanguageToggle}
-        >
-          <Languages size={14} />
-          <TooltipText value={t('language')} className="sidebar-settings-menu__text" />
-          <strong>
-            <TooltipText value={languageValue} className="sidebar-settings-menu__value" />
-          </strong>
-        </button>
+        />
       </div>
     </div>
   );
@@ -216,84 +184,19 @@ interface SidebarTagFilterProps {
 
 function SidebarTagFilter({ tags, activeTag, label, disabled, onSelect }: SidebarTagFilterProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [direction, setDirection] = useState<'up' | 'down'>('down');
-  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
   const rootRef = useRef<HTMLSpanElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
-
-  const updateMenuPosition = useCallback(() => {
-    const button = buttonRef.current;
-    if (!button) {
-      return;
-    }
-
-    const rect = button.getBoundingClientRect();
-    const freeBelow = window.innerHeight - rect.bottom;
-    const freeAbove = rect.top;
-    const nextDirection = freeBelow >= 180 || freeBelow >= freeAbove ? 'down' : 'up';
-    const maxHeight = Math.max(
-      118,
-      Math.min(246, (nextDirection === 'down' ? freeBelow : freeAbove) - 12),
-    );
-
-    setDirection(nextDirection);
-    setMenuStyle({
-      left: rect.left,
-      top: nextDirection === 'down' ? rect.bottom + 5 : undefined,
-      bottom: nextDirection === 'up' ? window.innerHeight - rect.top + 5 : undefined,
-      width: Math.max(rect.width, 158),
-      maxHeight,
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (isOpen) {
-      updateMenuPosition();
-    }
-  }, [isOpen, updateMenuPosition]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    window.addEventListener('resize', updateMenuPosition);
-    window.addEventListener('scroll', updateMenuPosition, true);
-
-    return () => {
-      window.removeEventListener('resize', updateMenuPosition);
-      window.removeEventListener('scroll', updateMenuPosition, true);
-    };
-  }, [isOpen, updateMenuPosition]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    const closeOnOutside = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
-        setIsOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsOpen(false);
-        buttonRef.current?.focus();
-      }
-    };
-
-    document.addEventListener('pointerdown', closeOnOutside);
-    document.addEventListener('keydown', closeOnEscape);
-
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutside);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [isOpen]);
+  const tagOptions = useMemo(
+    () => tags.map((tag) => ({ value: tag, label: tag })),
+    [tags],
+  );
+  const { close, direction, menuStyle } = usePortalMenu(isOpen, setIsOpen, buttonRef, menuRef, rootRef, {
+    flipThreshold: 180,
+    maxHeightCap: 246,
+    minWidth: 158,
+  });
 
   return (
     <span className="sidebar-tag-filter" ref={rootRef}>
@@ -314,41 +217,20 @@ function SidebarTagFilter({ tags, activeTag, label, disabled, onSelect }: Sideba
           <ChevronDown size={12} className="sidebar-tag-filter__chevron" />
         </button>
       </Tooltip>
-      {isOpen
-        ? createPortal(
-            <div
-              className={`custom-select__menu sidebar-tag-filter__menu custom-select__menu--${direction}`}
-              role="listbox"
-              id={listboxId}
-              aria-label={label}
-              ref={menuRef}
-              style={menuStyle}
-            >
-              {tags.map((tag) => {
-                const selected = activeTag?.toLowerCase() === tag.toLowerCase();
-
-                return (
-                  <button
-                    className={`custom-select__option ${selected ? 'custom-select__option--selected' : ''}`}
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    key={tag}
-                    onClick={() => {
-                      onSelect(tag);
-                      setIsOpen(false);
-                      buttonRef.current?.focus();
-                    }}
-                  >
-                    <TooltipText value={tag} className="custom-select__option-label" />
-                    {selected ? <Check size={13} /> : <span />}
-                  </button>
-                );
-              })}
-            </div>,
-            document.body,
-          )
-        : null}
+      <PortalListbox
+        isOpen={isOpen}
+        direction={direction}
+        menuStyle={menuStyle}
+        listboxId={listboxId}
+        label={label}
+        menuRef={menuRef}
+        value={activeTag ?? tagOptions[0]?.value ?? ''}
+        options={tagOptions}
+        menuClassName="sidebar-tag-filter__menu"
+        onSelect={onSelect}
+        onClose={close}
+        onFocusAnchor={() => buttonRef.current?.focus()}
+      />
     </span>
   );
 }
@@ -382,7 +264,7 @@ interface SidebarProps {
   onDragStart: (id: number | null) => void;
   onDropNode: (parentId: number | null) => void;
   onLanguageToggle: () => void;
-  onThemeToggle: () => void;
+  onThemeChange: (theme: UserTheme) => void;
   onExportJson: () => void;
   onImportJson: (file: File) => void;
   onOpenTrash: () => void;
@@ -425,7 +307,7 @@ export function Sidebar({
   onDragStart,
   onDropNode,
   onLanguageToggle,
-  onThemeToggle,
+  onThemeChange,
   onExportJson,
   onImportJson,
   onOpenTrash,
@@ -448,7 +330,6 @@ export function Sidebar({
 
   return (
     <aside className={`sidebar ${isOpen ? 'sidebar--open' : ''}`}>
-      <AmbientCubes area="sidebar" />
       <div className="sidebar__head">
         <div className="brand-lockup">
           <Tooltip label={isMenuMode ? t('notesTree') : t('menu')}>
@@ -489,7 +370,7 @@ export function Sidebar({
           onOpenTrash={onOpenTrash}
           onOpenGlobalAttachments={onOpenGlobalAttachments}
           onLanguageToggle={onLanguageToggle}
-          onThemeToggle={onThemeToggle}
+          onThemeChange={onThemeChange}
           aiEnabled={aiEnabled}
           onAiToggle={onAiToggle}
         />
@@ -599,7 +480,12 @@ export function Sidebar({
                 ) : null}
               </>
             ) : (
-              <div className="empty-state">{t('emptyTree')}</div>
+              <EmptyState
+                title={t('emptyTree')}
+                hint={t('emptyTreeHint')}
+                actionLabel={t('createNote')}
+                onAction={onCreateNote}
+              />
             )}
           </nav>
         </>

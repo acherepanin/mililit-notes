@@ -23,6 +23,7 @@ import type { DragEvent, MouseEvent, PointerEvent as ReactPointerEvent } from 'r
 
 import { notesApi, workspaceApi } from '../../api';
 import { CustomSelect, type SelectOption } from '../../components/CustomSelect';
+import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import { TooltipText } from '../../components/TooltipText';
 import type { Translator } from '../../i18n';
@@ -179,7 +180,11 @@ export function TrashPanel({ t, onSelectNote, onRefreshTree, onSuccess, onError 
           </article>
         ))}
         {filteredTrash.length === 0 ? (
-          <div className="note-tool-empty">{t('emptyTree')}</div>
+          <EmptyState
+            tone="panel"
+            title={trash.length === 0 ? t('emptyTrashTitle') : t('emptyTrashSearchTitle')}
+            hint={trash.length === 0 ? t('emptyTrashHint') : t('emptyTrashSearchHint')}
+          />
         ) : null}
       </div>
     </div>
@@ -251,7 +256,13 @@ export function VersionsPanel({
             </div>
           </article>
         ))}
-        {versions.length === 0 ? <div className="note-tool-empty">{t('emptyTree')}</div> : null}
+        {versions.length === 0 ? (
+          <EmptyState
+            tone="panel"
+            title={selectedNote ? t('emptyVersionsTitle') : t('emptyVersionsNoNoteTitle')}
+            hint={selectedNote ? t('emptyVersionsHint') : t('emptyVersionsNoNoteHint')}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -271,6 +282,22 @@ export function TemplatesPanel({
 
   const refresh = async () => setTemplates(await workspaceApi.listTemplates());
 
+  const saveAsTemplate = () =>
+    runTool(
+      async () => {
+        await workspaceApi.createTemplate({
+          name: draft.name || t('defaultNoteName'),
+          contentHtml: draft.contentHtml,
+          contentText: draft.contentText,
+        });
+        await refresh();
+      },
+      onSuccess,
+      onError,
+      t('saved'),
+      t('saveError'),
+    );
+
   useEffect(() => {
     void refresh();
   }, []);
@@ -288,22 +315,7 @@ export function TemplatesPanel({
           icon={<FilePlus2 size={16} />}
           variant="primary"
           disabled={!selectedNote}
-          onClick={() =>
-            runTool(
-              async () => {
-                await workspaceApi.createTemplate({
-                  name: draft.name || t('defaultNoteName'),
-                  contentHtml: draft.contentHtml,
-                  contentText: draft.contentText,
-                });
-                await refresh();
-              },
-              onSuccess,
-              onError,
-              t('saved'),
-              t('saveError'),
-            )
-          }
+          onClick={saveAsTemplate}
         />
       </div>
       <div className="note-tool-list">
@@ -353,7 +365,16 @@ export function TemplatesPanel({
             </div>
           </article>
         ))}
-        {templates.length === 0 ? <div className="note-tool-empty">{t('emptyTree')}</div> : null}
+        {templates.length === 0 ? (
+          <EmptyState
+            tone="panel"
+            title={t('emptyTemplatesTitle')}
+            hint={t('emptyTemplatesHint')}
+            actionLabel={t('saveAsTemplate')}
+            onAction={saveAsTemplate}
+            actionDisabled={!selectedNote}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -376,6 +397,26 @@ export function ShareLinksPanel({ t, selectedNote, onSuccess, onError }: PanelPr
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const createShareLink = () =>
+    runTool(
+      async () => {
+        if (!selectedNote) {
+          return;
+        }
+        const link = await workspaceApi.createShareLink(selectedNote.id, {
+          ttlHours: 24,
+          includeSecrets,
+          oneTime,
+        });
+        await navigator.clipboard.writeText(`${window.location.origin}${link.url}`);
+        await refresh();
+      },
+      onSuccess,
+      onError,
+      t('copied'),
+      t('saveError'),
+    );
 
   return (
     <div className="note-tool-panel">
@@ -403,24 +444,7 @@ export function ShareLinksPanel({ t, selectedNote, onSuccess, onError }: PanelPr
           icon={<Share2 size={16} />}
           variant="primary"
           disabled={!selectedNote}
-          onClick={() =>
-            runTool(
-              async () => {
-                if (!selectedNote) return;
-                const link = await workspaceApi.createShareLink(selectedNote.id, {
-                  ttlHours: 24,
-                  includeSecrets,
-                  oneTime,
-                });
-                await navigator.clipboard.writeText(`${window.location.origin}${link.url}`);
-                await refresh();
-              },
-              onSuccess,
-              onError,
-              t('copied'),
-              t('saveError'),
-            )
-          }
+          onClick={createShareLink}
         />
       </div>
       <div className="note-tool-list">
@@ -481,7 +505,16 @@ export function ShareLinksPanel({ t, selectedNote, onSuccess, onError }: PanelPr
             </article>
           );
         })}
-        {shareLinks.length === 0 ? <div className="note-tool-empty">{t('emptyTree')}</div> : null}
+        {shareLinks.length === 0 ? (
+          <EmptyState
+            tone="panel"
+            title={selectedNote ? t('emptyShareTitle') : t('emptyShareNoNoteTitle')}
+            hint={selectedNote ? t('emptyShareHint') : t('emptyShareNoNoteHint')}
+            actionLabel={t('createShareLink')}
+            onAction={createShareLink}
+            actionDisabled={!selectedNote}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -1057,6 +1090,16 @@ export function AttachmentsPanel({
                 role="listitem"
                 tabIndex={0}
                 onClick={(event) => selectAttachment(attachment, event)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    selectAttachment(attachment, {
+                      shiftKey: event.shiftKey,
+                      ctrlKey: event.ctrlKey,
+                      metaKey: event.metaKey,
+                    } as MouseEvent<HTMLElement>);
+                  }
+                }}
                 onDoubleClick={() =>
                   runTool(
                     () => openPreview(attachment),
@@ -1146,10 +1189,9 @@ export function AttachmentsPanel({
             );
           })}
           {filteredAttachments.length === 0 ? (
-            <div className="note-tool-empty note-tool-empty--inline">
-              <Paperclip size={18} />
-              {attachments.length ? t('noFilesFound') : t('emptyTree')}
-            </div>
+            <EmptyState tone="inline" title={attachments.length ? t('noFilesFound') : t('emptyTree')}>
+              <Paperclip size={18} aria-hidden />
+            </EmptyState>
           ) : null}
         </div>
 

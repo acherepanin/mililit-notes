@@ -1,10 +1,11 @@
 import { Check, KeyRound, Link2, LockKeyhole, ShieldCheck, Type, UserRound } from 'lucide-react';
-import type { CSSProperties, ReactNode } from 'react';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Tooltip } from '../components/Tooltip';
 import { TooltipText } from '../components/TooltipText';
+import { usePortalMenu } from '../components/usePortalMenu';
 import {
   copyFieldKinds,
   getKindLabel,
@@ -41,8 +42,6 @@ function getKindIcon(kind: CopyFieldKind): ReactNode {
 
 export function CopyFieldKindMenu({ kind, labels, disabled, onChange }: FieldKindMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [direction, setDirection] = useState<'up' | 'down'>('down');
-  const [menuStyle, setMenuStyle] = useState<CSSProperties>({});
   const rootRef = useRef<HTMLSpanElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -56,68 +55,13 @@ export function CopyFieldKindMenu({ kind, labels, disabled, onChange }: FieldKin
     [labels],
   );
   const currentLabel = getKindLabel(labels, kind);
-
-  const updateMenuPosition = useCallback(() => {
-    const button = buttonRef.current;
-    if (!button) {
-      return;
-    }
-
-    const rect = button.getBoundingClientRect();
-    const freeBelow = window.innerHeight - rect.bottom;
-    const freeAbove = rect.top;
-    const nextDirection = freeBelow >= 190 || freeBelow >= freeAbove ? 'down' : 'up';
-    const maxHeight = Math.max(
-      120,
-      Math.min(236, (nextDirection === 'down' ? freeBelow : freeAbove) - 10),
-    );
-
-    setDirection(nextDirection);
-    setMenuStyle({
-      left: Math.min(rect.left, window.innerWidth - 178),
-      top: nextDirection === 'down' ? rect.bottom + 5 : undefined,
-      bottom: nextDirection === 'up' ? window.innerHeight - rect.top + 5 : undefined,
-      width: 176,
-      maxHeight,
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (isOpen) {
-      updateMenuPosition();
-    }
-  }, [isOpen, updateMenuPosition]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      return;
-    }
-
-    const closeOnOutside = (event: PointerEvent) => {
-      const target = event.target as globalThis.Node;
-      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) {
-        setIsOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsOpen(false);
-        buttonRef.current?.focus();
-      }
-    };
-
-    window.addEventListener('resize', updateMenuPosition);
-    window.addEventListener('scroll', updateMenuPosition, true);
-    document.addEventListener('pointerdown', closeOnOutside);
-    document.addEventListener('keydown', closeOnEscape);
-
-    return () => {
-      window.removeEventListener('resize', updateMenuPosition);
-      window.removeEventListener('scroll', updateMenuPosition, true);
-      document.removeEventListener('pointerdown', closeOnOutside);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [isOpen, updateMenuPosition]);
+  const { close, direction, menuStyle } = usePortalMenu(isOpen, setIsOpen, buttonRef, menuRef, rootRef, {
+    flipThreshold: 190,
+    maxHeightCap: 236,
+    minWidth: 176,
+    matchAnchorWidth: false,
+    anchorMaxLeft: window.innerWidth - 178,
+  });
 
   return (
     <span className="copy-field-kind" ref={rootRef}>
@@ -159,7 +103,7 @@ export function CopyFieldKindMenu({ kind, labels, disabled, onChange }: FieldKin
                     key={option.value}
                     onClick={() => {
                       onChange(option.value);
-                      setIsOpen(false);
+                      close();
                       buttonRef.current?.focus();
                     }}
                   >

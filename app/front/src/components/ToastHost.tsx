@@ -116,8 +116,14 @@ export function ToastHost({
   closeLabel: string;
   onDismiss: (id: string) => void;
 }) {
+  const hasErrorToast = toasts.some((toast) => toast.kind === 'error');
+
   return (
-    <div className="toast-host" aria-live="polite">
+    <div
+      className="toast-host"
+      aria-live={hasErrorToast ? 'assertive' : 'polite'}
+      aria-relevant="additions"
+    >
       {toasts.map((toast) => (
         <ToastCard key={toast.id} toast={toast} closeLabel={closeLabel} onDismiss={onDismiss} />
       ))}

@@ -1,0 +1,282 @@
+﻿:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --font-sans:
+    'Aptos', 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--font-sans);
+  --font-mono: 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace;
+  --bg: #1a2230;
+  --bg-2: #232d3f;
+  --panel: rgb(36 46 64 / 94%);
+  --panel-2: rgb(44 56 78 / 90%);
+  --panel-3: rgb(52 66 92 / 82%);
+  --text: #f3f6fb;
+  --muted: #93a3b8;
+  --line: rgb(91 156 245 / 16%);
+  --line-strong: rgb(91 156 245 / 28%);
+  --accent: #5b9cf5;
+  --accent-2: #3ec9b8;
+  --accent-3: #4a86e8;
+  --accent-4: #2fa8d4;
+  --accent-5: #7ec0ff;
+  --accent-6: #82d9cf;
+  --accent-contrast: #f8fbff;
+  --icon-ink: #eef6ff;
+  --icon-ink-strong: #ffffff;
+  --icon-tile-bg: color-mix(in srgb, var(--panel-2) 70%, transparent);
+  --icon-tile-line: color-mix(in srgb, var(--line-strong) 54%, transparent);
+  --icon-group-line: color-mix(in srgb, var(--line-strong) 50%, transparent);
+  --font-ui: 0.875rem;
+  --font-small: 0.78rem;
+  --font-micro: 0.72rem;
+  --font-placeholder: 0.72rem;
+  --font-title: 1rem;
+  --font-value: 1.18rem;
+  --icon-box: 31px;
+  --icon-glyph: 17px;
+  --tree-icon-box: 22px;
+  --tree-icon-glyph: 13px;
+  --danger: #ff6b78;
+  --warn: #ffb45f;
+  --success: #4ce3a4;
+  --info: #76daff;
+  --syntax-keyword: #96d4ff;
+  --syntax-string: #7eedc8;
+  --syntax-number: #ffc98a;
+  --syntax-title: #f9de72;
+  --syntax-comment: #8496ad;
+  --syntax-meta: #82d9cf;
+  --surface: color-mix(in srgb, var(--panel) 93%, var(--accent) 7%);
+  --surface-glow: none;
+  --shadow: none;
+  --soft-shadow: none;
+  --bg-gradient:
+    linear-gradient(
+      180deg,
+      rgb(40 50 66 / 28%) 0%,
+      var(--bg) 38%,
+      color-mix(in srgb, var(--bg) 92%, var(--bg-2) 8%) 100%
+    ),
+    radial-gradient(120% 90% at 8% -20%, rgb(91 156 245 / 8%), transparent 58%),
+    radial-gradient(90% 70% at 100% 0%, rgb(62 201 184 / 6%), transparent 52%);
+  --layout-shadow:
+    1px 0 0 rgb(14 20 32 / 22%), 0 1px 0 rgb(14 20 32 / 20%), 3px 3px 6px rgb(14 20 32 / 14%);
+  --cube-line: rgb(91 156 245 / 52%);
+  --cube-line-2: rgb(62 201 184 / 44%);
+  --cube-fill: rgb(91 156 245 / 12%);
+  --cube-fill-2: rgb(62 201 184 / 10%);
+  --cube-spark: rgb(126 192 255 / 40%);
+  --decor-opacity: 0.58;
+  --radius: 8px;
+  --speed: 240ms;
+  --speed-slow: 340ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f5f7fb;
+  --bg-2: #eaf0f7;
+  --panel: rgb(255 255 255 / 92%);
+  --panel-2: rgb(250 252 255 / 88%);
+  --panel-3: rgb(239 246 252 / 78%);
+  --text: #152033;
+  --muted: #607086;
+  --line: rgb(47 111 228 / 16%);
+  --line-strong: rgb(47 111 228 / 28%);
+  --accent: #2f6fe4;
+  --accent-2: #2fb9ad;
+  --accent-3: #3d7ae8;
+  --accent-4: #2a9fd4;
+  --accent-5: #68b7ff;
+  --accent-6: #5ec9c0;
+  --accent-contrast: #ffffff;
+  --icon-ink: #0b4fb8;
+  --icon-ink-strong: #075fdc;
+  --icon-tile-bg: rgb(250 254 255 / 76%);
+  --icon-tile-line: rgb(180 220 255 / 72%);
+  --icon-group-line: rgb(204 229 250 / 72%);
+  --danger: #ff3047;
+  --warn: #b35d00;
+  --success: #008a63;
+  --info: #0076c9;
+  --syntax-keyword: #175cd3;
+  --syntax-string: #047857;
+  --syntax-number: #b45309;
+  --syntax-title: #155eef;
+  --syntax-comment: #64748b;
+  --syntax-meta: #0f766e;
+  --surface: color-mix(in srgb, var(--panel) 96%, var(--accent-2) 4%);
+  --surface-glow: none;
+  --shadow: none;
+  --soft-shadow: none;
+  --layout-shadow:
+    1px 0 0 rgb(224 232 240 / 58%), 0 1px 0 rgb(224 232 240 / 50%),
+    3px 3px 5px rgb(217 228 239 / 30%);
+  --cube-line: rgb(47 111 228 / 82%);
+  --cube-line-2: rgb(47 185 173 / 72%);
+  --cube-fill: rgb(47 111 228 / 22%);
+  --cube-fill-2: rgb(47 185 173 / 18%);
+  --cube-spark: rgb(47 111 228 / 62%);
+  --decor-opacity: 0.82;
+  --bg-gradient: none;
+}
+
+:root[data-theme='aurora'] {
+  color-scheme: dark;
+  --bg: #1c2428;
+  --bg-2: #252d32;
+  --panel: rgb(38 46 52 / 94%);
+  --panel-2: rgb(46 56 62 / 90%);
+  --panel-3: rgb(56 68 74 / 82%);
+  --text: #eef4f6;
+  --muted: #8fa0a8;
+  --line: rgb(120 168 168 / 14%);
+  --line-strong: rgb(120 168 168 / 22%);
+  --accent: #6eb8b0;
+  --accent-2: #8eb89c;
+  --accent-3: #7aa4be;
+  --accent-4: #6a9eb0;
+  --accent-5: #9ec8d0;
+  --accent-6: #a8c8b4;
+  --accent-contrast: #0e1a1c;
+  --icon-ink: #e4f0f0;
+  --icon-ink-strong: #f6fafb;
+  --icon-tile-bg: color-mix(in srgb, var(--panel-2) 72%, rgb(110 168 162 / 6%));
+  --icon-tile-line: color-mix(in srgb, var(--line-strong) 54%, transparent);
+  --icon-group-line: color-mix(in srgb, var(--line-strong) 48%, transparent);
+  --danger: #e88a96;
+  --warn: #d8b878;
+  --success: #6ec8a0;
+  --info: #8ec0d8;
+  --syntax-keyword: #9ec8d8;
+  --syntax-string: #94c8ac;
+  --syntax-number: #d8c090;
+  --syntax-title: #a8c4d8;
+  --syntax-comment: #7a9098;
+  --syntax-meta: #8eb89c;
+  --surface: color-mix(in srgb, var(--panel) 93%, var(--accent) 7%);
+  --bg-gradient:
+    linear-gradient(
+      180deg,
+      rgb(44 54 58 / 26%) 0%,
+      var(--bg) 38%,
+      color-mix(in srgb, var(--bg) 92%, var(--bg-2) 8%) 100%
+    ),
+    radial-gradient(120% 90% at 0% -15%, rgb(110 168 162 / 7%), transparent 58%),
+    radial-gradient(90% 70% at 100% 0%, rgb(122 164 190 / 6%), transparent 54%);
+  --layout-shadow:
+    1px 0 0 rgb(14 20 24 / 22%), 0 1px 0 rgb(14 20 24 / 20%), 3px 3px 6px rgb(14 20 24 / 14%);
+  --cube-line: rgb(110 168 162 / 48%);
+  --cube-line-2: rgb(142 184 156 / 40%);
+  --cube-fill: rgb(110 168 162 / 11%);
+  --cube-fill-2: rgb(142 184 156 / 9%);
+  --cube-spark: rgb(158 200 208 / 36%);
+  --decor-opacity: 0.56;
+}
+
+:root[data-theme='ember'] {
+  color-scheme: dark;
+  --bg: #1e1d1b;
+  --bg-2: #262422;
+  --panel: rgb(42 40 38 / 94%);
+  --panel-2: rgb(50 48 44 / 90%);
+  --panel-3: rgb(60 58 54 / 82%);
+  --text: #f2efe9;
+  --muted: #9a948c;
+  --line: rgb(168 158 148 / 14%);
+  --line-strong: rgb(168 158 148 / 22%);
+  --accent: #b8926e;
+  --accent-2: #a89878;
+  --accent-3: #c4a484;
+  --accent-4: #9a8870;
+  --accent-5: #d4c0a0;
+  --accent-6: #b8b0a0;
+  --accent-contrast: #1a1410;
+  --icon-ink: #ece6de;
+  --icon-ink-strong: #f8f6f2;
+  --icon-tile-bg: color-mix(in srgb, var(--panel-2) 74%, rgb(184 146 110 / 5%));
+  --icon-tile-line: color-mix(in srgb, var(--line-strong) 52%, transparent);
+  --icon-group-line: color-mix(in srgb, var(--line-strong) 46%, transparent);
+  --danger: #e08080;
+  --warn: #d4a868;
+  --success: #78b894;
+  --info: #c4b090;
+  --syntax-keyword: #d4c0a0;
+  --syntax-string: #88b898;
+  --syntax-number: #c8a878;
+  --syntax-title: #d8c8a8;
+  --syntax-comment: #8a847c;
+  --syntax-meta: #a89878;
+  --surface: color-mix(in srgb, var(--panel) 94%, var(--accent) 6%);
+  --bg-gradient:
+    linear-gradient(
+      180deg,
+      rgb(50 46 42 / 24%) 0%,
+      var(--bg) 38%,
+      color-mix(in srgb, var(--bg) 92%, var(--bg-2) 8%) 100%
+    ),
+    radial-gradient(120% 90% at 0% -10%, rgb(184 146 110 / 6%), transparent 58%),
+    radial-gradient(90% 70% at 100% 0%, rgb(168 152 128 / 5%), transparent 54%);
+  --layout-shadow:
+    1px 0 0 rgb(22 20 18 / 22%), 0 1px 0 rgb(22 20 18 / 20%), 3px 3px 6px rgb(22 20 18 / 14%);
+  --cube-line: rgb(184 146 110 / 42%);
+  --cube-line-2: rgb(168 152 128 / 36%);
+  --cube-fill: rgb(184 146 110 / 10%);
+  --cube-fill-2: rgb(168 152 128 / 8%);
+  --cube-spark: rgb(212 192 160 / 32%);
+  --decor-opacity: 0.52;
+}
+
+:root[data-theme='ocean'] {
+  color-scheme: dark;
+  --bg: #1a222c;
+  --bg-2: #232c38;
+  --panel: rgb(38 46 58 / 94%);
+  --panel-2: rgb(46 56 68 / 90%);
+  --panel-3: rgb(56 68 80 / 82%);
+  --text: #eef2f8;
+  --muted: #8c9aae;
+  --line: rgb(106 156 188 / 14%);
+  --line-strong: rgb(106 156 188 / 22%);
+  --accent: #6aafc9;
+  --accent-2: #b09098;
+  --accent-3: #78b0c4;
+  --accent-4: #6888b8;
+  --accent-5: #94c4dc;
+  --accent-6: #c0a8b0;
+  --accent-contrast: #0c141c;
+  --icon-ink: #e6eef6;
+  --icon-ink-strong: #f6f8fc;
+  --icon-tile-bg: color-mix(in srgb, var(--panel-2) 72%, rgb(106 176 200 / 6%));
+  --icon-tile-line: color-mix(in srgb, var(--line-strong) 54%, transparent);
+  --icon-group-line: color-mix(in srgb, var(--line-strong) 48%, transparent);
+  --danger: #e08898;
+  --warn: #d4b070;
+  --success: #6cc0a4;
+  --info: #8ec0dc;
+  --syntax-keyword: #94c4dc;
+  --syntax-string: #88c4b0;
+  --syntax-number: #d4b888;
+  --syntax-title: #c0a8b0;
+  --syntax-comment: #7a8c9c;
+  --syntax-meta: #78b0c4;
+  --surface: color-mix(in srgb, var(--panel) 93%, var(--accent) 7%);
+  --bg-gradient:
+    linear-gradient(
+      180deg,
+      rgb(42 52 66 / 26%) 0%,
+      var(--bg) 38%,
+      color-mix(in srgb, var(--bg) 92%, var(--bg-2) 8%) 100%
+    ),
+    radial-gradient(120% 90% at 0% -15%, rgb(106 176 200 / 7%), transparent 58%),
+    radial-gradient(90% 70% at 100% 0%, rgb(176 144 152 / 5%), transparent 54%);
+  --layout-shadow:
+    1px 0 0 rgb(14 20 28 / 22%), 0 1px 0 rgb(14 20 28 / 20%), 3px 3px 6px rgb(14 20 28 / 14%);
+  --cube-line: rgb(106 176 200 / 46%);
+  --cube-line-2: rgb(176 144 152 / 38%);
+  --cube-fill: rgb(106 176 200 / 11%);
+  --cube-fill-2: rgb(176 144 152 / 9%);
+  --cube-spark: rgb(148 196 220 / 34%);
+  --decor-opacity: 0.56;
+}

@@ -1,6 +1,6 @@
 import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
-import type { UserLanguage, UserRole, UserTheme } from '../../auth/auth.types';
+import { USER_THEME_VALUES, type UserLanguage, type UserRole, type UserTheme } from '../../auth/auth.types';
 
 export class CreateUserDto {
   @IsString()
@@ -22,6 +22,6 @@ export class CreateUserDto {
   language?: UserLanguage;
 
   @IsOptional()
-  @IsIn(['light', 'dark'])
+  @IsIn([...USER_THEME_VALUES])
   theme?: UserTheme;
 }

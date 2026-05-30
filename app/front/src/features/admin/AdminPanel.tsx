@@ -12,6 +12,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { adminApi } from '../../api';
+import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import { TooltipText } from '../../components/TooltipText';
 import type { Translator } from '../../i18n';
@@ -375,7 +376,7 @@ export function AdminPanel({
               />
             ))}
             {visibleUsers.length === 0 ? (
-              <div className="empty-state">{t('adminNoUsers')}</div>
+              <EmptyState tone="plain" title={t('adminNoUsers')} />
             ) : null}
           </div>
         </div>
@@ -510,7 +511,7 @@ export function AdminPanel({
               </tbody>
             </table>
             {activityRows.length === 0 ? (
-              <div className="empty-state">{t('adminNoActivity')}</div>
+              <EmptyState tone="plain" title={t('adminNoActivity')} />
             ) : null}
           </div>
         </div>
