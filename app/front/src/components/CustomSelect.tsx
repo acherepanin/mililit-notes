@@ -3,7 +3,7 @@ import { useId, useMemo, useRef, useState } from 'react';
 
 import { PortalListbox } from './PortalListbox';
 import { TooltipText } from './TooltipText';
-import { usePortalMenu } from './usePortalMenu';
+import { usePortalMenu, type PortalMenuConfig } from './usePortalMenu';
 
 export interface SelectOption<TValue extends string> {
   value: TValue;
@@ -16,6 +16,7 @@ interface CustomSelectProps<TValue extends string> {
   label: string;
   disabled?: boolean;
   className?: string;
+  menuConfig?: PortalMenuConfig;
   onChange: (value: TValue) => void;
 }
 
@@ -25,6 +26,7 @@ export function CustomSelect<TValue extends string>({
   label,
   disabled = false,
   className = '',
+  menuConfig,
   onChange,
 }: CustomSelectProps<TValue>) {
   const [isOpen, setIsOpen] = useState(false);
@@ -42,6 +44,7 @@ export function CustomSelect<TValue extends string>({
     buttonRef,
     menuRef,
     rootRef,
+    menuConfig,
   );
 
   return (

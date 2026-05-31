@@ -15,7 +15,8 @@ import {
   Trash2,
   Undo2,
 } from 'lucide-react';
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 
 import { aiApi, notesApi, workspaceApi } from '../../api';
 import { DeleteConfirmationProvider, useConfirmDelete } from '../../components/DeleteConfirmationProvider';
@@ -29,7 +30,7 @@ import { formatCurrentCodeBlock } from '../../editor/editorCode';
 import { useNotebookEditor } from '../../editor/useNotebookEditor';
 import type { Translator } from '../../i18n';
 import { getNextTheme } from '../../themes';
-import type { AiSettings, AuthUser, NoteTreeNode, Tag, UserLanguage, UserTheme } from '../../types';
+import type { AiSettings, MeUser, NoteTreeNode, Tag, UserLanguage, UserTheme } from '../../types';
 import type { ToastKind } from '../../components/useToasts';
 import { escapeHtml } from '../../utils/html';
 import { AiAssistant } from '../ai/AiAssistant';
@@ -47,10 +48,6 @@ import { useAppShortcuts, useShortcutItems } from '../notes/useAppShortcuts';
 import { useNotesWorkspace } from '../notes/useNotesWorkspace';
 import { downloadJsonFile, validateJsonExportPayload } from './jsonBackup';
 
-const AdminPanel = lazy(() =>
-  import('../admin/AdminPanel').then((module) => ({ default: module.AdminPanel })),
-);
-
 type ActiveModal =
   | { type: 'link' }
   | { type: 'trash' }
@@ -60,10 +57,8 @@ type ActiveModal =
   | { type: 'attachments' }
   | { type: 'accountAttachments' }
   | null;
-type WorkspaceView = 'notes' | 'admin';
-
 interface AuthenticatedAppProps {
-  user: AuthUser;
+  user: MeUser;
   language: UserLanguage;
   theme: UserTheme;
   t: Translator;
@@ -105,10 +100,10 @@ function AuthenticatedAppMain({
   pushToast,
 }: AuthenticatedAppProps) {
   const confirmDelete = useConfirmDelete();
+  const navigate = useNavigate();
   const copyFieldLabels = useMemo(() => createCopyFieldLabels(t), [t]);
   const workspace = useNotesWorkspace(true);
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
-  const [activeView, setActiveView] = useState<WorkspaceView>('notes');
   const [isEditorEditing, setIsEditorEditing] = useState(false);
   const [globalTags, setGlobalTags] = useState<Tag[]>([]);
   const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
@@ -140,12 +135,6 @@ function AuthenticatedAppMain({
     lastErrorRef.current = workspace.error;
     pushToast('error', t('loadError'));
   }, [pushToast, t, workspace.error]);
-
-  useEffect(() => {
-    if (user.role !== 'admin' && activeView === 'admin') {
-      setActiveView('notes');
-    }
-  }, [activeView, user.role]);
 
   const refreshGlobalTags = useCallback(async () => {
     const tags = await notesApi.listTags();
@@ -701,13 +690,14 @@ function AuthenticatedAppMain({
         description: t('commandAdminDesc'),
         icon: <ShieldCheck size={15} />,
         disabled: user.role !== 'admin',
-        run: () => setActiveView('admin'),
+        run: () => navigate('/admin'),
       },
     ],
     [
       createDefaultNote,
       isEditorEditing,
       language,
+      navigate,
       onLanguageChange,
       onThemeChange,
       openAiChat,
@@ -721,6 +711,9 @@ function AuthenticatedAppMain({
 
   return (
     <main className="app-shell">
+      <a className="skip-link" href="#app-main">
+        {t('skipToContent')}
+      </a>
       <Sidebar
         tree={workspace.visibleTree}
         pinnedNodes={workspace.pinnedNodes}
@@ -739,17 +732,7 @@ function AuthenticatedAppMain({
         theme={theme}
         t={t}
         isAdmin={user.role === 'admin'}
-        activeView={activeView}
         onClose={() => workspace.setMobileTreeOpen(false)}
-        onOpenNotes={() => {
-          setActiveView('notes');
-          workspace.selectFirstNote();
-          workspace.setMobileTreeOpen(false);
-        }}
-        onOpenAdmin={() => {
-          setActiveView('admin');
-          workspace.setMobileTreeOpen(false);
-        }}
         onQueryChange={workspace.setQuery}
         onFilterChange={workspace.setTreeFilter}
         onCreateNote={() => createDefaultNote(workspace.selectedId)}
@@ -757,7 +740,6 @@ function AuthenticatedAppMain({
         onDropRoot={() => dropDraggedNote(null)}
         onToggleNode={workspace.toggleExpanded}
         onSelectNoteItem={(id, flatOrder, event) => {
-          setActiveView('notes');
           workspace.selectNoteItem(id, flatOrder, event);
         }}
         onRenameNode={renameTreeNote}
@@ -771,28 +753,37 @@ function AuthenticatedAppMain({
         onImportJson={importJsonFile}
         onOpenTrash={openTrashModal}
         onOpenGlobalAttachments={() => setActiveModal({ type: 'accountAttachments' })}
-        aiEnabled={aiSettings?.enabled ?? false}
+        aiEnabled={
+          Boolean(user.subscription?.entitlements.ai.enabled) && Boolean(aiSettings?.enabled)
+        }
         onAiToggle={toggleAi}
         onLogout={onLogout}
       />
 
-      <section
-        className={`workspace ${activeView === 'admin' && user.role === 'admin' ? 'workspace--admin' : ''}`}
-      >
-        {activeView === 'admin' && user.role === 'admin' ? (
-          <Suspense fallback={<EmptyState title={t('loading')} tone="plain" className="empty-editor" />}>
-            <AdminPanel
-              currentUserId={user.id}
-              t={t}
-              language={language}
-              onOpenSidebar={() => workspace.setMobileTreeOpen((isOpen) => !isOpen)}
-              onError={(message) => pushToast('error', message)}
-              onSuccess={(message) => pushToast('success', message)}
-            />
-          </Suspense>
-        ) : (
-          <>
-            <Topbar
+      <section className="workspace" id="app-main">
+        {user.role !== 'admin' && user.subscription && !user.subscription.entitlements.ai.enabled ? (
+          <div className="workspace__banners">
+            <div className="subscription-banner subscription-banner--warn" role="status">
+              <span>{t('subscriptionAiLocked')}</span>
+              <Link to="/account">{t('subscriptionUpgrade')}</Link>
+            </div>
+          </div>
+        ) : null}
+        {user.role !== 'admin' &&
+        user.subscription &&
+        user.subscription.entitlements.files.enabled &&
+        user.subscription.entitlements.files.storageLimitBytes != null &&
+        user.subscription.storageUsedBytes >=
+          user.subscription.entitlements.files.storageLimitBytes * 0.9 ? (
+          <div className="workspace__banners">
+            <div className="subscription-banner subscription-banner--warn" role="status">
+              <span>{t('subscriptionStorageBanner')}</span>
+              <Link to="/account">{t('subscriptionUpgrade')}</Link>
+            </div>
+          </div>
+        ) : null}
+        <div className="workspace__main">
+          <Topbar
               selectedNote={workspace.selectedNote}
               draft={workspace.draft}
               tags={globalTags}
@@ -843,8 +834,7 @@ function AuthenticatedAppMain({
               )}
             </section>
             <EditorLinkTooltip containerRef={editorWrapRef} isEditing={isEditorEditing} />
-          </>
-        )}
+        </div>
       </section>
 
       <AiAssistant
@@ -880,7 +870,6 @@ function AuthenticatedAppMain({
             return;
           }
 
-          setActiveView('notes');
           workspace.selectNote(noteId);
           await workspace.loadNote(noteId);
         }}
@@ -906,7 +895,6 @@ function AuthenticatedAppMain({
           draft={workspace.draft}
           t={t}
           onSelectNote={(id) => {
-            setActiveView('notes');
             workspace.selectNote(id);
             setActiveModal(null);
           }}
@@ -948,7 +936,6 @@ function AuthenticatedAppMain({
           draft={workspace.draft}
           t={t}
           onSelectNote={(id) => {
-            setActiveView('notes');
             workspace.selectNote(id);
             setActiveModal(null);
           }}

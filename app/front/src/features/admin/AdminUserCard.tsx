@@ -1,43 +1,99 @@
-import { KeyRound, Save, Shield, Trash2 } from 'lucide-react';
+import { CreditCard, Save, ShieldCheck, Trash2, UserRound } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
-import { CustomSelect, type SelectOption } from '../../components/CustomSelect';
+import { adminApi } from '../../api';
+import { IconActionMenu } from '../../components/IconActionMenu';
 import { IconButton } from '../../components/IconButton';
+import { PasswordField } from '../../components/PasswordField';
 import { TooltipText } from '../../components/TooltipText';
 import type { Translator } from '../../i18n';
-import type { AdminUser, UpdateAdminUserPayload, UserRole } from '../../types';
+import type { AdminUser, SubscriptionPlan, UpdateAdminUserPayload, UserRole } from '../../types';
+import { resolvePlanIcon } from '../../utils/planIcons';
 
 interface AdminUserCardProps {
   currentUserId: number;
   draft: UpdateAdminUserPayload;
-  roleOptions: Array<SelectOption<UserRole>>;
+  plans: SubscriptionPlan[];
   t: Translator;
   user: AdminUser;
   onDelete: (userId: number) => void;
   onDraftChange: (userId: number, patch: UpdateAdminUserPayload) => void;
+  onPlanAssigned: (userId: number, planId: number) => void;
+  onPlanError: () => void;
   onSave: (userId: number) => void;
 }
-
-const getInitial = (username: string) => username.trim().slice(0, 1).toUpperCase() || 'U';
 
 export function AdminUserCard({
   currentUserId,
   draft,
-  roleOptions,
+  plans,
   t,
   user,
   onDelete,
   onDraftChange,
+  onPlanAssigned,
+  onPlanError,
   onSave,
 }: AdminUserCardProps) {
   const isCurrentUser = user.id === currentUserId;
+  const role = (draft.role ?? user.role) as UserRole;
+  const [assignedPlanId, setAssignedPlanId] = useState<number | null>(user.subscriptionPlanId);
+
+  useEffect(() => {
+    setAssignedPlanId(user.subscriptionPlanId);
+  }, [user.id, user.subscriptionPlanId]);
+
+  const selectedPlan = assignedPlanId
+    ? plans.find((plan) => plan.id === assignedPlanId)
+    : null;
+
+  const roleOptions = [
+    {
+      value: 'user' as const,
+      label: t('roleUser'),
+      hint: t('roleUserHint'),
+      icon: <UserRound size={14} aria-hidden />,
+    },
+    {
+      value: 'admin' as const,
+      label: t('roleAdmin'),
+      hint: t('roleAdminHint'),
+      icon: <ShieldCheck size={14} aria-hidden />,
+    },
+  ];
+
+  const planOptions = plans.map((plan) => ({
+    value: plan.id,
+    label: plan.isHidden ? `${plan.name} (${t('planHiddenBadge')})` : plan.name,
+    hint: plan.isHidden
+      ? t('planHiddenAssignHint')
+      : (plan.description ?? plan.slug),
+    icon: resolvePlanIcon(plan.iconKey, 14),
+  }));
+
+  const assignPlan = (nextPlanId: number) => {
+    if (!nextPlanId || nextPlanId === assignedPlanId) {
+      return;
+    }
+    adminApi
+      .assignUserSubscription(user.id, nextPlanId)
+      .then(() => {
+        setAssignedPlanId(nextPlanId);
+        onPlanAssigned(user.id, nextPlanId);
+      })
+      .catch(() => onPlanError());
+  };
 
   return (
     <article className={`admin-user-card ${isCurrentUser ? 'admin-user-card--self' : ''}`}>
       <div className="admin-user-card__profile">
-        <span className="admin-user-card__avatar">{getInitial(user.username)}</span>
-        <div className="admin-user-card__identity">
-          <TooltipText value={user.username} className="admin-user-card__name-static" />
-        </div>
+        <span
+          className={`admin-user-card__role-icon ${role === 'admin' ? 'admin-user-card__role-icon--admin' : ''}`.trim()}
+          aria-hidden
+        >
+          {role === 'admin' ? <ShieldCheck size={15} /> : <UserRound size={15} />}
+        </span>
+        <TooltipText value={user.username} className="admin-user-card__name" />
       </div>
 
       <form
@@ -56,30 +112,48 @@ export function AdminUserCard({
           type="text"
           value={user.username}
         />
-        <label className="admin-user-card__role-field">
-          <Shield size={14} />
-          <CustomSelect
-            className="admin-user-card__role"
-            label={t('role')}
-            value={(draft.role ?? user.role) as UserRole}
-            options={roleOptions}
-            onChange={(nextRole) => onDraftChange(user.id, { role: nextRole })}
-          />
-        </label>
-
-        <label className="admin-user-card__password">
-          <KeyRound size={14} />
-          <input
-            autoComplete="new-password"
-            name={`new-password-${user.id}`}
-            value={draft.password ?? ''}
-            onChange={(event) => onDraftChange(user.id, { password: event.target.value })}
-            placeholder={t('adminNewPassword')}
-            type="password"
-            aria-label={t('adminNewPassword')}
-          />
-        </label>
+        <PasswordField
+          hideLabel
+          className="admin-user-card__password-field"
+          label={t('adminNewPassword')}
+          showPasswordLabel={t('showPassword')}
+          hidePasswordLabel={t('hidePassword')}
+          generateLabel={t('generatePassword')}
+          value={draft.password ?? ''}
+          onValueChange={(password) => onDraftChange(user.id, { password })}
+          name={`new-password-${user.id}`}
+          placeholder={t('adminNewPassword')}
+          autoComplete="new-password"
+        />
       </form>
+
+      <div className="admin-user-card__pickers">
+        <IconActionMenu
+          label={t('role')}
+          tooltip={t('role')}
+          icon={role === 'admin' ? <ShieldCheck size={16} /> : <UserRound size={16} />}
+          value={role}
+          options={roleOptions}
+          variant={role === 'admin' ? 'primary' : 'plain'}
+          onChange={(nextRole) => onDraftChange(user.id, { role: nextRole })}
+        />
+        <IconActionMenu
+          label={t('adminAssignPlan')}
+          tooltip={t('currentPlan')}
+          icon={
+            selectedPlan ? (
+              resolvePlanIcon(selectedPlan.iconKey, 16)
+            ) : (
+              <CreditCard size={16} aria-hidden />
+            )
+          }
+          value={assignedPlanId ?? 0}
+          options={planOptions}
+          disabled={planOptions.length === 0}
+          variant={assignedPlanId ? 'active' : 'plain'}
+          onChange={(nextPlanId) => assignPlan(nextPlanId)}
+        />
+      </div>
 
       <div className="admin-user-card__actions">
         <IconButton

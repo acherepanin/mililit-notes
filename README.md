@@ -12,10 +12,11 @@
 
 ## Документы
 
-- [functionality.md](./functionality.md) - функционал приложения, роли, админка, редактор, hotkeys.
-- [api.md](./api.md) - REST API, DTO, ответы, ошибки и cURL-запросы.
-- [architecture.md](./architecture.md) - backend/frontend модули, SQLite-схема и потоки данных.
-- [deployment.md](./deployment.md) - локальный запуск, production build, Docker, Compose, VM deploy, backup.
+- [functionality.md](./app/docs/functionality.md) - функционал приложения, роли, админка, редактор, hotkeys, подписки, личный кабинет.
+- [api.md](./app/docs/api.md) - REST API, DTO, ответы, ошибки и cURL-запросы.
+- [architecture.md](./app/docs/architecture.md) - backend/frontend модули, SQLite-схема, потоки данных, безопасность.
+- [deployment.md](./app/docs/deployment.md) - локальный запуск, production build, Docker, Compose, VM deploy, backup.
+- [ui.md](./app/docs/ui.md) - UI-компоненты, tooltip/select/modal/toast правила.
 
 ## Быстрый Локальный Запуск
 
@@ -59,7 +60,15 @@ npm run start
 - пароль: `admin`
 - роль: `admin`
 
-Значения берутся из `ADMIN_USERNAME` и `ADMIN_PASSWORD`. Для локального запуска они заданы в `app/back/.env`. Новые пользователи, созданные через админку, по умолчанию получают роль `user`.
+Значения берутся из `ADMIN_USERNAME` и `ADMIN_PASSWORD`. Новые пользователи регистрируются через `/register` и получают тариф `free`.
+
+## Маршруты SPA
+
+- `/login`, `/register` — вход и регистрация
+- `/notes` — рабочая зона
+- `/account` — личный кабинет и подписки
+- `/admin` — админ-панель (role: admin)
+- `/share/:token` — публичная ссылка без auth
 
 ## Данные И SQLite
 

@@ -11,10 +11,10 @@ import {
   Query,
   Req,
   Res,
-  UseGuards,
 } from '@nestjs/common';
 
-import { AuthGuard, type AuthenticatedRequest } from '../auth/auth.guard';
+import { Public } from '../auth/public.decorator';
+import { type AuthenticatedRequest } from '../auth/auth.guard';
 import {
   AttachmentFolderDto,
   CreateNoteFromTemplateDto,
@@ -79,6 +79,7 @@ function parseFolderId(rawFolderId?: string): number | null | undefined {
   return Number.isInteger(folderId) && folderId > 0 ? folderId : undefined;
 }
 
+@Public()
 @Controller()
 export class PublicShareController {
   constructor(@Inject(WorkspaceService) private readonly workspaceService: WorkspaceService) {}
@@ -98,7 +99,6 @@ export class PublicShareController {
 }
 
 @Controller()
-@UseGuards(AuthGuard)
 export class WorkspaceController {
   constructor(@Inject(WorkspaceService) private readonly workspaceService: WorkspaceService) {}
 

@@ -18,12 +18,22 @@ import type {
   Attachment,
   AttachmentFolder,
   AuthUser,
+  MeUser,
+  MonitoringPerformance,
+  MonitoringRange,
+  PlanEntitlements,
+  RequestErrorLog,
+  SubscriptionLog,
+  SubscriptionOrder,
+  SubscriptionPlan,
+  UserSubscription,
   CreateAdminUserPayload,
   CreateNotePayload,
-  NoteSearchResult,
   NoteTemplate,
   NoteVersion,
   LoginResponse,
+  RegistrationPendingResponse,
+  RegistrationPendingStatus,
   Note,
   NoteTreeNode,
   PublicShare,
@@ -44,6 +54,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -57,13 +68,10 @@ function parseApiErrorMessage(raw: string, status: number): string {
   try {
     const payload = JSON.parse(raw) as unknown;
 
-    if (
-      typeof payload === 'object' &&
-      payload !== null &&
-      'message' in payload &&
-      typeof payload.message === 'string'
-    ) {
-      return payload.message;
+    if (typeof payload === 'object' && payload !== null) {
+      if ('message' in payload && typeof payload.message === 'string') {
+        return payload.message;
+      }
     }
 
     if (
@@ -79,6 +87,22 @@ function parseApiErrorMessage(raw: string, status: number): string {
   }
 
   return raw;
+}
+
+function parseApiErrorCode(raw: string): string | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const payload = JSON.parse(raw) as unknown;
+    if (typeof payload === 'object' && payload !== null && 'code' in payload) {
+      const code = payload.code;
+      return typeof code === 'string' ? code : undefined;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
 export function setApiToken(token: string | null): void {
@@ -97,7 +121,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const details = await response.text();
-    throw new ApiError(parseApiErrorMessage(details, response.status), response.status);
+    throw new ApiError(
+      parseApiErrorMessage(details, response.status),
+      response.status,
+      parseApiErrorCode(details),
+    );
   }
 
   return (await response.json()) as T;
@@ -126,21 +154,64 @@ export const authApi = {
       method: 'POST',
       body: JSON.stringify({ username, password }),
     }),
-  getMe: () => request<AuthUser>('/api/me'),
+  register: (payload: {
+    username: string;
+    password: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  }) =>
+    request<RegistrationPendingResponse>('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getRegistrationPendingStatus: (pendingId: number) =>
+    request<{ status: RegistrationPendingStatus }>(`/api/auth/register/pending/${pendingId}`),
+  verifyEmail: (token: string) =>
+    request<{ ok: true }>(`/api/auth/verify-email?token=${encodeURIComponent(token)}`),
+  getMe: () => request<MeUser>('/api/me'),
   updatePreferences: (payload: { language?: UserLanguage; theme?: UserTheme }) =>
-    request<AuthUser>('/api/me/preferences', {
+    request<MeUser>('/api/me/preferences', {
       method: 'PATCH',
       body: JSON.stringify(payload),
+    }),
+  updateProfile: (payload: {
+    firstName?: string | null;
+    lastName?: string | null;
+    patronymic?: string | null;
+    birthDate?: string | null;
+  }) =>
+    request<MeUser>('/api/me/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<{ ok: true }>('/api/me/password', {
+      method: 'PATCH',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }),
+};
+
+export const subscriptionApi = {
+  listPlans: () => request<SubscriptionPlan[]>('/api/subscription-plans'),
+  checkout: (payload: {
+    planId: number;
+    termMonths?: number;
+    mode?: 'purchase' | 'renew';
+  }) =>
+    request<SubscriptionOrder>('/api/subscription/checkout', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  confirmCheckout: (orderId: number) =>
+    request<UserSubscription>(`/api/subscription/checkout/${orderId}/confirm`, {
+      method: 'POST',
     }),
 };
 
 export const notesApi = {
   getTree: () => request<NoteTreeNode[]>('/api/notes/tree'),
   listTrash: () => request<Note[]>('/api/notes/trash'),
-  search: (query: string) =>
-    request<NoteSearchResult[]>(`/api/notes/search?q=${encodeURIComponent(query)}`),
-  reindexSearch: () =>
-    request<{ indexed: number }>('/api/notes/search/reindex', { method: 'POST' }),
   listTags: () => request<Tag[]>('/api/notes/tags'),
   createTag: (name: string) =>
     request<Tag>('/api/notes/tags', {
@@ -370,7 +441,62 @@ export const adminApi = {
     request<{ id: number }>(`/api/admin/users/${id}`, {
       method: 'DELETE',
     }),
-  listActivity: () => request<ActivityLog[]>('/api/admin/activity?limit=80'),
+  listMonitoringActions: () => request<ActivityLog[]>('/api/admin/monitoring/actions?limit=100'),
+  listMonitoringSubscriptions: () =>
+    request<SubscriptionLog[]>('/api/admin/monitoring/subscriptions?limit=100'),
+  listMonitoringErrors: () =>
+    request<RequestErrorLog[]>('/api/admin/monitoring/errors?limit=100'),
+  getMonitoringPerformance: (range: MonitoringRange = 'day') =>
+    request<MonitoringPerformance>(`/api/admin/monitoring/performance?range=${range}`),
   getStats: (range: AdminStatsRange = 'week') =>
     request<AdminStats>(`/api/admin/stats?range=${range}`),
+  listSubscriptionPlans: () => request<SubscriptionPlan[]>('/api/admin/subscription-plans'),
+  createSubscriptionPlan: (payload: {
+    slug: string;
+    name: string;
+    description?: string;
+    priceCents: number;
+    currency?: string;
+    billingPeriod: SubscriptionPlan['billingPeriod'];
+    entitlements: PlanEntitlements;
+    iconKey?: string;
+    cardColor?: string;
+    cardArt?: string;
+    isActive?: boolean;
+    isHidden?: boolean;
+    sortOrder?: number;
+  }) =>
+    request<SubscriptionPlan>('/api/admin/subscription-plans', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateSubscriptionPlan: (
+    id: number,
+    payload: Partial<{
+      slug: string;
+      name: string;
+      description: string | null;
+      priceCents: number;
+      currency: string;
+      billingPeriod: SubscriptionPlan['billingPeriod'];
+      entitlements: PlanEntitlements;
+      iconKey: string;
+      cardColor: string;
+      cardArt: string;
+      isActive: boolean;
+      isHidden: boolean;
+      sortOrder: number;
+    }>,
+  ) =>
+    request<SubscriptionPlan>(`/api/admin/subscription-plans/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteSubscriptionPlan: (id: number) =>
+    request<{ id: number }>(`/api/admin/subscription-plans/${id}`, { method: 'DELETE' }),
+  assignUserSubscription: (userId: number, planId: number) =>
+    request<UserSubscription>(`/api/admin/subscription-plans/assign/${userId}`, {
+      method: 'POST',
+      body: JSON.stringify({ planId }),
+    }),
 };

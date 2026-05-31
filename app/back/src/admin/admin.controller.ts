@@ -13,16 +13,15 @@ import {
   UseGuards,
 } from '@nestjs/common';
 
-import type { ActivityResponse } from '../activity/activity.types';
 import { AdminGuard } from '../auth/admin.guard';
-import { AuthGuard, type AuthenticatedRequest } from '../auth/auth.guard';
+import { type AuthenticatedRequest } from '../auth/auth.guard';
 import { AdminService } from './admin.service';
 import type { AdminStatsResponse, AdminUserResponse } from './admin.types';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 @Controller('admin')
-@UseGuards(AuthGuard, AdminGuard)
+@UseGuards(AdminGuard)
 export class AdminController {
   constructor(@Inject(AdminService) private readonly adminService: AdminService) {}
 
@@ -51,11 +50,6 @@ export class AdminController {
     @Param('id', ParseIntPipe) id: number,
   ): { id: number } {
     return this.adminService.deleteUser(request.user.id, id);
-  }
-
-  @Get('activity')
-  listActivity(@Query('limit') limit?: string): ActivityResponse[] {
-    return this.adminService.listActivity(limit ? Number(limit) : undefined);
   }
 
   @Get('stats')

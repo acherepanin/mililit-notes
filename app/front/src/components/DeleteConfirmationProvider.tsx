@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useId,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -12,8 +13,6 @@ import {
 import type { Translator } from '../i18n';
 import { IconButton } from './IconButton';
 import { Modal } from './Modal';
-
-export const DELETE_CONFIRM_WORD = 'Delete';
 
 export type DeleteConfirmationRequest = {
   title: string;
@@ -38,6 +37,7 @@ export function DeleteConfirmationProvider({
   const resolverRef = useRef<((confirmed: boolean) => void) | null>(null);
   const inputId = useId();
   const descriptionId = useId();
+  const confirmWord = t('deleteConfirmWord');
 
   const confirmDelete = useCallback((nextRequest: DeleteConfirmationRequest) => {
     return new Promise<boolean>((resolve) => {
@@ -54,13 +54,14 @@ export function DeleteConfirmationProvider({
     setTypedWord('');
   };
 
-  const canConfirm = typedWord === DELETE_CONFIRM_WORD;
+  const canConfirm = typedWord === confirmWord;
 
   return (
     <DeleteConfirmationContext.Provider value={{ confirmDelete }}>
       {children}
       <DeleteConfirmationDialog
         canConfirm={canConfirm}
+        confirmWord={confirmWord}
         descriptionId={descriptionId}
         inputId={inputId}
         isOpen={request !== null}
@@ -80,6 +81,7 @@ function DeleteConfirmationDialog({
   request,
   t,
   typedWord,
+  confirmWord,
   inputId,
   descriptionId,
   canConfirm,
@@ -91,6 +93,7 @@ function DeleteConfirmationDialog({
   request: DeleteConfirmationRequest | null;
   t: Translator;
   typedWord: string;
+  confirmWord: string;
   inputId: string;
   descriptionId: string;
   canConfirm: boolean;
@@ -98,6 +101,11 @@ function DeleteConfirmationDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const hint = useMemo(
+    () => t('deleteConfirmHint').replace('{word}', confirmWord),
+    [confirmWord, t],
+  );
+
   return (
     <Modal
       isOpen={isOpen}
@@ -109,7 +117,7 @@ function DeleteConfirmationDialog({
       <div className="modal-form delete-confirm">
         <p id={descriptionId}>{request?.description}</p>
         <label className="delete-confirm__field" htmlFor={inputId}>
-          <span>{t('deleteConfirmHint')}</span>
+          <span>{hint}</span>
           <input
             id={inputId}
             autoComplete="off"
@@ -117,7 +125,7 @@ function DeleteConfirmationDialog({
             autoCorrect="off"
             spellCheck={false}
             value={typedWord}
-            placeholder={DELETE_CONFIRM_WORD}
+            placeholder={confirmWord}
             aria-describedby={descriptionId}
             onChange={(event) => onTypedWordChange(event.target.value)}
             onKeyDown={(event) => {

@@ -1,7 +1,9 @@
 import { Body, Controller, Headers, Inject, Post } from '@nestjs/common';
 
+import { Public } from '../auth/public.decorator';
 import { AiBotRuntimeService } from './ai-bot-runtime.service';
 
+@Public()
 @Controller('ai/bots')
 export class AiBotWebhookController {
   constructor(

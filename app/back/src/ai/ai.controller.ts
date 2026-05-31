@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 
 import { AdminGuard } from '../auth/admin.guard';
-import { AuthGuard, type AuthenticatedRequest } from '../auth/auth.guard';
+import { type AuthenticatedRequest } from '../auth/auth.guard';
 import { AiBotSettingsService } from './ai-bot-settings.service';
 import { AiModelCatalogService } from './ai-model-catalog.service';
 import { AiService } from './ai.service';
@@ -23,7 +23,6 @@ import type {
 } from './ai.types';
 
 @Controller('ai')
-@UseGuards(AuthGuard)
 export class AiController {
   constructor(
     @Inject(AiService) private readonly aiService: AiService,

@@ -9,6 +9,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import { ActivityService } from '../activity/activity.service';
+import { hideSecretValuesInHtml, redactSecretHtml, redactSecretText } from '../common/secret-redaction.util';
+import { EntitlementsService } from '../subscriptions/entitlements.service';
 import { DatabaseService } from '../infra/database.service';
 import { AiCryptoService } from './ai-crypto.service';
 import { AiModelCatalogService } from './ai-model-catalog.service';
@@ -75,6 +77,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     @Inject(ActivityService) private readonly activityService: ActivityService,
     @Inject(AiModelCatalogService) private readonly aiModelCatalogService: AiModelCatalogService,
     @Inject(AiToolsService) private readonly aiToolsService: AiToolsService,
+    @Inject(EntitlementsService) private readonly entitlementsService: EntitlementsService,
     @Inject(ConfigService) private readonly configService: ConfigService,
   ) {}
 
@@ -388,6 +391,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     dto: SendAiMessageDto,
     options: AiChatOptions = {},
   ): Promise<AiChatResponse> {
+    this.entitlementsService.assertAiAccess(userId);
     const settings = this.ensureSettings(userId);
 
     if (!settings.enabled) {
@@ -395,7 +399,8 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     }
 
     const apiKey = this.getApiKey(settings);
-    const model = settings.model?.trim();
+    const model =
+      settings.model?.trim() || this.entitlementsService.getDefaultAiModel(userId)?.trim() || null;
     const allowReadSecrets =
       options.allowReadSecretsOverride ?? Boolean(settings.allow_read_secrets);
 
@@ -404,6 +409,10 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (this.isBareConfirmation(dto.message)) {
+      this.entitlementsService.assertMonthlyAiTokenCapacity(
+        userId,
+        this.estimateTokens(dto.message),
+      );
       this.enforceUsageLimits(userId, settings, this.estimateTokens(dto.message));
       this.recordAiUsage(
         userId,
@@ -442,6 +451,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       { role: 'user', content: dto.message.trim() },
     ];
     const estimatedInputTokens = this.estimateMessagesTokens(messages);
+    this.entitlementsService.assertMonthlyAiTokenCapacity(userId, estimatedInputTokens);
     this.enforceUsageLimits(userId, settings, estimatedInputTokens);
     const tools = this.aiToolsService.getOpenAiTools(options.allowedToolNames);
     const response = await fetch(this.buildProviderUrl(settings.base_url, 'chat/completions'), {
@@ -562,6 +572,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
   }
 
   async transcribeAudio(userId: number, audio: AiAudioTranscriptionInput): Promise<string> {
+    this.entitlementsService.assertAiAccess(userId);
     const settings = this.ensureSettings(userId);
 
     if (!settings.enabled) {
@@ -577,6 +588,10 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     formData.append('model', model);
     formData.append('file', new Blob([audioBytes], { type: audio.mimeType }), audio.fileName);
     this.enforceUsageLimits(userId, settings, 0);
+    this.entitlementsService.assertMonthlyAiTokenCapacity(
+      userId,
+      this.estimateTokens(audio.fileName) + 512,
+    );
 
     const response = await fetch(this.buildProviderUrl(settings.base_url, 'audio/transcriptions'), {
       method: 'POST',
@@ -604,6 +619,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     const inputTokens = this.readTokenUsage(payload.usage?.input_tokens) ?? 0;
     const outputTokens =
       this.readTokenUsage(payload.usage?.output_tokens) ?? this.estimateTokens(text);
+    this.entitlementsService.assertMonthlyAiTokenCapacity(userId, inputTokens + outputTokens);
     this.recordAiUsage(userId, settings.provider_name, model, inputTokens, outputTokens);
 
     return text;
@@ -614,6 +630,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     dto: ExecuteAiToolDto,
     options: Pick<AiChatOptions, 'allowedToolNames'> = {},
   ): AiToolExecutionResponse {
+    this.entitlementsService.assertAiAccess(userId);
     return this.aiToolsService.executeAction(
       userId,
       dto.name,
@@ -982,7 +999,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       usageToday: this.getUsageToday(settings.user_id),
       providerName: settings.provider_name,
       baseUrl: settings.base_url,
-      model: settings.model,
+      model: settings.model ?? this.entitlementsService.getDefaultAiModel(settings.user_id),
       hasApiKey: Boolean(settings.api_key_encrypted),
       apiKeyHint: settings.api_key_hint,
       apiKeyUpdatedAt: settings.api_key_updated_at,
@@ -1061,8 +1078,8 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
 
     return {
       ...currentNote,
-      contentHtml: this.redactSecretHtml(currentNote.contentHtml),
-      contentText: this.redactSecretText(currentNote.contentText),
+      contentHtml: redactSecretHtml(currentNote.contentHtml),
+      contentText: redactSecretText(currentNote.contentText),
     };
   }
 
@@ -1118,20 +1135,6 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     } catch {
       return 'readonly';
     }
-  }
-
-  private redactSecretHtml(value: string): string {
-    return value.replace(
-      /(<[^>]*data-copy-field[^>]*(?:data-secret="true"|data-kind="(?:password|token|credential)")|<[^>]*(?:data-secret="true"|data-kind="(?:password|token|credential)")[^>]*data-copy-field[^>]*)([^>]*data-value=")[^"]*("[^>]*>)/gi,
-      '$1$2[secret hidden]$3',
-    );
-  }
-
-  private redactSecretText(value: string): string {
-    return value.replace(
-      /\b(password|пароль|token|токен|api[-_\s]?key|secret|секрет)\b\s*[:=-]\s*[^\n,;]+/gi,
-      (match, label: string) => `${label}: [secret hidden]`,
-    );
   }
 
   private isBareConfirmation(message: string): boolean {

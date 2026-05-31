@@ -12,6 +12,10 @@ BASE_URL=http://localhost:3000/api
 
 - `GET /api/health`
 - `POST /api/auth/login`
+- `POST /api/auth/register`
+- `GET /api/share/:token`
+- `POST /api/ai/bots/telegram/webhook`
+- `POST /api/ai/bots/vk/webhook`
 
 Все остальные endpoints требуют:
 
@@ -96,6 +100,67 @@ TOKEN=$(curl -s -X POST "$BASE_URL/auth/login" \
 Ошибки:
 
 - `401` - неверный логин, пароль, token или истекший token.
+- `401` - `Account email is not confirmed yet` — вход с данными неподтверждённой регистрации.
+
+### POST `/api/auth/register`
+
+Создаёт **ожидающую** регистрацию и отправляет письмо с подтверждением. Пользователь в `users` **не создаётся** до перехода по ссылке из письма.
+
+Правила:
+
+- `username` — только `a-z`, `0-9`, `_`; сохраняется в нижнем регистре; уникален среди пользователей и активных (не истёкших) pending-записей.
+- `email`, `username`, `password` обязательны; `password` ≥ 8 символов.
+- Pending истекает через 24 часа и удаляется; ссылка одноразовая.
+
+Request:
+
+```json
+{
+  "username": "alice",
+  "password": "secret",
+  "email": "alice@example.com",
+  "firstName": "Alice",
+  "lastName": "Smith"
+}
+```
+
+Response `201`:
+
+```json
+{
+  "pendingId": 12,
+  "email": "alice@example.com",
+  "expiresAt": "2026-05-31T12:00:00.000Z"
+}
+```
+
+Ошибки:
+
+- `400` — валидация.
+- `409` — username или email уже заняты (включая неподтверждённую регистрацию с тем же логином).
+
+### GET `/api/auth/register/pending/:id`
+
+Публичный статус ожидания подтверждения.
+
+Response `200`:
+
+```json
+{ "status": "pending" }
+```
+
+`status`: `pending` | `verified` | `expired` | `not_found`.
+
+### GET `/api/auth/verify-email?token=...`
+
+Подтверждает email, создаёт пользователя, назначает бесплатный тариф, инвалидирует token.
+
+Response `200`: `{ "ok": true }`
+
+Ошибки:
+
+- `404` — ссылка недействительна, уже использована или истекла.
+- `409` — username/email заняты на момент подтверждения.
 
 ### GET `/api/me`
 
@@ -110,7 +175,26 @@ Response `200`:
   "role": "admin",
   "language": "ru",
   "theme": "dark",
-  "lastLoginAt": "2026-05-02T09:16:23.000Z"
+  "lastLoginAt": "2026-05-02T09:16:23.000Z",
+  "profile": {
+    "email": "admin@example.com",
+    "firstName": null,
+    "lastName": null,
+    "patronymic": null,
+    "birthDate": null
+  },
+  "subscription": {
+    "subscription": {
+      "id": 1,
+      "plan": { "id": 1, "slug": "free", "name": "Free", "entitlements": { "ai": { "enabled": false }, "files": { "enabled": true, "storageLimitBytes": 104857600 } } },
+      "status": "active",
+      "startedAt": "2026-05-30T10:00:00.000Z",
+      "expiresAt": null,
+      "source": "seed"
+    },
+    "entitlements": { "ai": { "enabled": false }, "files": { "enabled": true, "storageLimitBytes": 104857600 } },
+    "storageUsedBytes": 0
+  }
 }
 ```
 
@@ -120,6 +204,25 @@ cURL:
 curl -s "$BASE_URL/me" \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+### PATCH `/api/me/profile`
+
+Обновляет ФИО и дату рождения. Email изменить нельзя. Response — тот же объект, что `GET /api/me`.
+
+### PATCH `/api/me/password`
+
+Смена пароля.
+
+Request:
+
+```json
+{
+  "currentPassword": "old",
+  "newPassword": "new-secret"
+}
+```
+
+Response `200`: `{ "ok": true }`.
 
 ### PATCH `/api/me/preferences`
 
@@ -577,6 +680,7 @@ curl -s -X DELETE "$BASE_URL/share-links/1" \
 
 `POST /notes/:id/share-links` returns `url: "/share/<token>"` for copying and opening in browser.
 `includeSecrets: true` keeps secret/password/token values available for copy buttons on the public page while the UI still masks them visually.
+При `includeSecrets: false` backend маскирует секреты и в `contentHtml`, и в `contentText` ответа `GET /share/<token>`.
 `oneTime: true` creates a single-use link. The first successful `GET /share/<token>` returns the note, increments `accessCount` and immediately revokes the link for future opens.
 `DELETE /share-links/:id` deletes the link immediately. Public API data is still loaded from `GET /share/<token>` under the `/api` prefix.
 
@@ -980,6 +1084,37 @@ curl -s -X POST "$BASE_URL/ai/bots/vk/webhook" \
   -d '{"type":"message_new","group_id":123,"secret":"secret","object":{"message":{"from_id":456,"peer_id":456,"text":"найди заметки про деплой"}}}'
 ```
 
+## Subscriptions
+
+### GET `/api/subscription-plans`
+
+Каталог активных тарифов (для витрины в личном кабинете).
+
+### GET `/api/me/subscription`
+
+Текущая подписка, effective entitlements и `storageUsedBytes`.
+
+### POST `/api/subscription/checkout`
+
+Создаёт заказ на смену тарифа. Body: `{ "planId": 2 }`.
+
+### POST `/api/subscription/checkout/:orderId/confirm`
+
+Mock-подтверждение оплаты; активирует подписку.
+
+Ошибки enforcement (AI, upload):
+
+- `403` + `code: "SUBSCRIPTION_REQUIRED"`
+- `403` + `code: "STORAGE_LIMIT_EXCEEDED"`
+
+### Admin subscription plans
+
+- `GET /api/admin/subscription-plans`
+- `POST /api/admin/subscription-plans`
+- `PATCH /api/admin/subscription-plans/:id`
+- `DELETE /api/admin/subscription-plans/:id`
+- `POST /api/admin/subscription-plans/assign/:userId` — body `{ "planId": 2 }`
+
 ## Admin
 
 Все admin endpoints требуют роль `admin`.
@@ -1018,13 +1153,14 @@ curl -s "$BASE_URL/admin/users" \
 
 ### POST `/api/admin/users`
 
-Создает пользователя. Если `role` не передан, используется `user`.
+Создает пользователя. Email сохраняется без подтверждения — пользователь создается администратором. Если `role` не передан, используется `user`.
 
 Request:
 
 ```json
 {
   "username": "bob",
+  "email": "bob@example.com",
   "password": "bobpass",
   "role": "user",
   "language": "ru",
@@ -1038,13 +1174,13 @@ cURL:
 curl -s -X POST "$BASE_URL/admin/users" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"username":"bob","password":"bobpass"}'
+  -d '{"username":"bob","email":"bob@example.com","password":"bobpass"}'
 ```
 
 Ошибки:
 
-- `400` - неверный payload или пустой username;
-- `409` - username уже занят.
+- `400` - неверный payload, username, email или password;
+- `409` - username или email уже заняты.
 
 ### PATCH `/api/admin/users/:id`
 
@@ -1089,11 +1225,35 @@ curl -s -X DELETE "$BASE_URL/admin/users/2" \
 - `400` - admin пытается удалить собственный аккаунт;
 - `404` - пользователь не найден.
 
-### GET `/api/admin/activity?limit=80`
+### GET `/api/admin/monitoring/actions?limit=100`
 
-Возвращает историю действий. `limit` ограничивается диапазоном `1..200`; если значение не число, используется `80`.
+Действия пользователей без событий подписок (`subscription.*` вынесены в отдельную вкладку).
 
-Модель:
+Query `limit`: число от 1 до 200, по умолчанию `100`.
+
+### GET `/api/admin/monitoring/subscriptions?limit=100`
+
+События подписок: оплаченные/неуспешные/отменённые заказы (`checkout`) и назначения админом или миграции (`admin_grant`, `migration`). Включает сумму, срок, окончание, всего потрачено и дату последней покупки.
+
+Query `limit`: число от 1 до 200, по умолчанию `100`.
+
+### GET `/api/admin/monitoring/errors?limit=100`
+
+Неуспешные API-запросы (4xx/5xx, кроме 401/404) с расшифровкой ошибки и JSON-телом ответа. Чувствительные поля (`password`, `token`, `secret`, `apiKey`, `authorization` и т.п.) редактируются до записи.
+
+Не логируются частые UI-запросы: health, polling регистрации, дерево заметок, admin stats/monitoring, auth login/register, AI bot webhooks.
+
+Записи старше 90 дней удаляются при старте сервиса.
+
+Query `limit`: число от 1 до 200, по умолчанию `100`.
+
+### GET `/api/admin/monitoring/performance?range=day`
+
+Метрики нагрузки сервиса за период `hour|day|week|month`: количество запросов, среднее/макс. время, ошибки (по тем же правилам, что и вкладка «Ошибки»), память процесса и системы, load average, buckets по времени.
+
+Метрики хранятся **в памяти текущего процесса** (до 7 дней, до 12 000 сэмплов) и сбрасываются при перезапуске. В multi-instance окружении каждый инстанс показывает только свои данные.
+
+Модель действий:
 
 ```ts
 interface ActivityLog {
@@ -1113,7 +1273,7 @@ interface ActivityLog {
 cURL:
 
 ```bash
-curl -s "$BASE_URL/admin/activity?limit=50" \
+curl -s "$BASE_URL/admin/monitoring/actions?limit=50" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -1246,7 +1406,7 @@ curl -s "$BASE_URL/me" -H "Authorization: Bearer $TOKEN"
 BOB_ID=$(curl -s -X POST "$BASE_URL/admin/users" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"username":"bob","password":"bobpass"}' \
+  -d '{"username":"bob","email":"bob@example.com","password":"bobpass"}' \
   | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).id")
 
 BOB_TOKEN=$(curl -s -X POST "$BASE_URL/auth/login" \
@@ -1261,7 +1421,7 @@ curl -s -X POST "$BASE_URL/notes" \
 
 curl -s "$BASE_URL/notes/tree" -H "Authorization: Bearer $BOB_TOKEN"
 curl -s "$BASE_URL/notes/tree" -H "Authorization: Bearer $TOKEN"
-curl -s "$BASE_URL/admin/activity?limit=50" -H "Authorization: Bearer $TOKEN"
+curl -s "$BASE_URL/admin/monitoring/actions?limit=50" -H "Authorization: Bearer $TOKEN"
 curl -s "$BASE_URL/admin/stats" -H "Authorization: Bearer $TOKEN"
 
 curl -s -X DELETE "$BASE_URL/admin/users/$BOB_ID" \

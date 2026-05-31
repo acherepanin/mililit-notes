@@ -10,10 +10,9 @@ import {
   Post,
   Query,
   Req,
-  UseGuards,
 } from '@nestjs/common';
 
-import { AuthGuard, type AuthenticatedRequest } from '../auth/auth.guard';
+import { type AuthenticatedRequest } from '../auth/auth.guard';
 import { CreateNoteDto } from './dto/create-note.dto';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { MoveNoteDto } from './dto/move-note.dto';
@@ -30,7 +29,6 @@ import type {
 } from './notes.types';
 
 @Controller('notes')
-@UseGuards(AuthGuard)
 export class NotesController {
   constructor(@Inject(NotesService) private readonly notesService: NotesService) {}
 

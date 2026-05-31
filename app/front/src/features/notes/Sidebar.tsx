@@ -1,179 +1,28 @@
 import {
   ArrowLeftToLine,
-  BrainCircuit,
   ChevronDown,
-  Download,
   FilePlus2,
-  Languages,
   ListTree,
   LogOut,
   Menu,
   NotebookText,
-  Paperclip,
   Search,
-  Shield,
   Star,
   Tags,
   Trash2,
-  Upload,
 } from 'lucide-react';
 import { useId, useMemo, useRef, useState, type MouseEvent } from 'react';
 
 import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import { PortalListbox } from '../../components/PortalListbox';
-import { SettingsMenuItem } from '../../components/SettingsMenuItem';
 import { Tooltip } from '../../components/Tooltip';
-import { TooltipText } from '../../components/TooltipText';
 import { usePortalMenu } from '../../components/usePortalMenu';
 import type { Translator } from '../../i18n';
 import type { NoteTreeFilter, NoteTreeNode, SaveStatus, UserLanguage, UserTheme } from '../../types';
 import { flattenTreeInOrder } from '../../utils/tree';
 import { NotesTree } from './NotesTree';
-import { SidebarThemePicker } from './SidebarThemePicker';
-
-interface SidebarSettingsMenuProps {
-  language: UserLanguage;
-  theme: UserTheme;
-  t: Translator;
-  activeView: 'notes' | 'admin';
-  isAdmin: boolean;
-  status: SaveStatus;
-  onOpenNotes: () => void;
-  onOpenAdmin: () => void;
-  onExportJson: () => void;
-  onImportJson: (file: File) => void;
-  onOpenTrash: () => void;
-  onOpenGlobalAttachments: () => void;
-  onLanguageToggle: () => void;
-  onThemeChange: (theme: UserTheme) => void;
-  aiEnabled: boolean;
-  onAiToggle: () => void;
-}
-
-function SidebarSettingsMenu({
-  language,
-  theme,
-  t,
-  activeView,
-  isAdmin,
-  status,
-  onOpenNotes,
-  onOpenAdmin,
-  onExportJson,
-  onImportJson,
-  onOpenTrash,
-  onOpenGlobalAttachments,
-  onLanguageToggle,
-  onThemeChange,
-  aiEnabled,
-  onAiToggle,
-}: SidebarSettingsMenuProps) {
-  const languageValue = language === 'ru' ? 'RU' : 'EN';
-  const importInputRef = useRef<HTMLInputElement | null>(null);
-
-  return (
-    <div className="sidebar-settings-menu" role="menu">
-      <div className="sidebar-settings-menu__group" role="group" aria-label={t('menu')}>
-        <span className="sidebar-settings-menu__label">{t('menu')}</span>
-        <button
-          className={`sidebar-settings-menu__item sidebar-settings-menu__item--nav sidebar-settings-menu__item--status-${status} ${
-            activeView === 'notes' ? 'sidebar-settings-menu__item--active' : ''
-          }`}
-          type="button"
-          role="menuitem"
-          onClick={onOpenNotes}
-        >
-          <NotebookText size={14} />
-          <TooltipText value={t('notes')} className="sidebar-settings-menu__text" />
-        </button>
-        {isAdmin ? (
-          <button
-            className={`sidebar-settings-menu__item sidebar-settings-menu__item--nav ${
-              activeView === 'admin' ? 'sidebar-settings-menu__item--active' : ''
-            }`}
-            type="button"
-            role="menuitem"
-            onClick={onOpenAdmin}
-          >
-            <Shield size={14} />
-            <TooltipText value={t('adminPanel')} className="sidebar-settings-menu__text" />
-          </button>
-        ) : null}
-      </div>
-      <div className="sidebar-settings-menu__group" role="group" aria-label={t('notesManagement')}>
-        <span className="sidebar-settings-menu__label">{t('notesManagement')}</span>
-        <input
-          className="sidebar-file-input"
-          ref={importInputRef}
-          type="file"
-          accept="application/json,.json"
-          onChange={(event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = '';
-            if (file) {
-              onImportJson(file);
-            }
-          }}
-        />
-        <button
-          className="sidebar-settings-menu__item"
-          type="button"
-          role="menuitem"
-          onClick={onOpenTrash}
-        >
-          <Trash2 size={14} />
-          <TooltipText value={t('trash')} className="sidebar-settings-menu__text" />
-        </button>
-        <button
-          className="sidebar-settings-menu__item"
-          type="button"
-          role="menuitem"
-          onClick={onOpenGlobalAttachments}
-        >
-          <Paperclip size={14} />
-          <TooltipText value={t('accountFiles')} className="sidebar-settings-menu__text" />
-        </button>
-        <button
-          className="sidebar-settings-menu__item"
-          type="button"
-          role="menuitem"
-          onClick={onExportJson}
-        >
-          <Download size={14} />
-          <TooltipText value={t('exportJson')} className="sidebar-settings-menu__text" />
-        </button>
-        <button
-          className="sidebar-settings-menu__item"
-          type="button"
-          role="menuitem"
-          onClick={() => importInputRef.current?.click()}
-        >
-          <Upload size={14} />
-          <TooltipText value={t('importJson')} className="sidebar-settings-menu__text" />
-        </button>
-      </div>
-      <div className="sidebar-settings-menu__group" role="group" aria-label={t('settings')}>
-        <span className="sidebar-settings-menu__label">{t('settings')}</span>
-        <SettingsMenuItem
-          icon={<BrainCircuit size={14} />}
-          label={t('aiAssistant')}
-          value={aiEnabled ? t('aiEnabledShort') : t('aiDisabledShort')}
-          active={aiEnabled}
-          ariaPressed={aiEnabled}
-          onClick={onAiToggle}
-        />
-        <SidebarThemePicker theme={theme} t={t} onThemeChange={onThemeChange} />
-        <SettingsMenuItem
-          icon={<Languages size={14} />}
-          label={t('language')}
-          value={languageValue}
-          onClick={onLanguageToggle}
-        />
-      </div>
-    </div>
-  );
-}
+import { SidebarSettingsMenu } from './SidebarSettingsMenu';
 
 interface SidebarTagFilterProps {
   tags: string[];
@@ -279,9 +128,6 @@ interface SidebarProps {
   aiEnabled: boolean;
   onAiToggle: () => void;
   isAdmin: boolean;
-  activeView: 'notes' | 'admin';
-  onOpenNotes: () => void;
-  onOpenAdmin: () => void;
   onLogout: () => void;
 }
 
@@ -324,9 +170,6 @@ export function Sidebar({
   aiEnabled,
   onAiToggle,
   isAdmin,
-  activeView,
-  onOpenNotes,
-  onOpenAdmin,
   onLogout,
 }: SidebarProps) {
   const [isMenuMode, setIsMenuMode] = useState(false);
@@ -388,11 +231,8 @@ export function Sidebar({
           language={language}
           theme={theme}
           t={t}
-          activeView={activeView}
           isAdmin={isAdmin}
           status={status}
-          onOpenNotes={onOpenNotes}
-          onOpenAdmin={onOpenAdmin}
           onExportJson={onExportJson}
           onImportJson={onImportJson}
           onOpenTrash={onOpenTrash}

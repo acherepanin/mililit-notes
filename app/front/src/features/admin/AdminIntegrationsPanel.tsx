@@ -14,8 +14,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { aiApi } from '../../api';
 import { IconButton } from '../../components/IconButton';
+import { PasswordInputActions } from '../../components/PasswordInputActions';
 import { Tooltip } from '../../components/Tooltip';
 import { TooltipText } from '../../components/TooltipText';
+import { usePasswordVisibility } from '../../hooks/usePasswordVisibility';
 import type { Translator } from '../../i18n';
 import type {
   AiBotAdminSettings,
@@ -211,6 +213,10 @@ export function AdminIntegrationsPanel({ t, onError, onSuccess }: AdminIntegrati
     [activeProvider, settings],
   );
   const draft = drafts[activeProvider];
+  const telegramSecretVisibility = usePasswordVisibility();
+  const telegramTokenVisibility = usePasswordVisibility();
+  const vkSecretVisibility = usePasswordVisibility();
+  const vkTokenVisibility = usePasswordVisibility();
 
   const loadSettings = useCallback(async () => {
     setIsLoading(true);
@@ -420,15 +426,15 @@ export function AdminIntegrationsPanel({ t, onError, onSuccess }: AdminIntegrati
               <AdminIntegrationField
                 wide
                 endAction={
-                  <Tooltip label={t('adminBotGenerateSecret')}>
-                    <button
-                      className="admin-integration-field-action"
-                      type="button"
-                      onClick={() => updateDraft({ secret: generateWebhookSecret() })}
-                    >
-                      <WandSparkles size={14} />
-                    </button>
-                  </Tooltip>
+                  <PasswordInputActions
+                    visible={telegramSecretVisibility.visible}
+                    onToggle={telegramSecretVisibility.toggle}
+                    showLabel={t('showPassword')}
+                    hideLabel={t('hidePassword')}
+                    generateLabel={t('adminBotGenerateSecret')}
+                    onGenerate={() => updateDraft({ secret: generateWebhookSecret() })}
+                    generateIcon={<WandSparkles size={12} aria-hidden />}
+                  />
                 }
                 icon={<ShieldCheck size={14} />}
                 label={t('adminTelegramSecret')}
@@ -441,11 +447,23 @@ export function AdminIntegrationsPanel({ t, onError, onSuccess }: AdminIntegrati
                     activeSettings?.secretHint,
                     t('aiApiKeyPlaceholder'),
                   )}
-                  type="password"
+                  type={telegramSecretVisibility.inputType}
                   onChange={(event) => updateDraft({ secret: event.target.value })}
                 />
               </AdminIntegrationField>
-              <AdminIntegrationField wide icon={<KeyRound size={14} />} label={t('adminBotToken')}>
+              <AdminIntegrationField
+                wide
+                endAction={
+                  <PasswordInputActions
+                    visible={telegramTokenVisibility.visible}
+                    onToggle={telegramTokenVisibility.toggle}
+                    showLabel={t('showPassword')}
+                    hideLabel={t('hidePassword')}
+                  />
+                }
+                icon={<KeyRound size={14} />}
+                label={t('adminBotToken')}
+              >
                 <input
                   autoComplete="new-password"
                   value={draft.botToken}
@@ -454,7 +472,7 @@ export function AdminIntegrationsPanel({ t, onError, onSuccess }: AdminIntegrati
                     activeSettings?.botTokenHint,
                     t('aiApiKeyPlaceholder'),
                   )}
-                  type="password"
+                  type={telegramTokenVisibility.inputType}
                   onChange={(event) => updateDraft({ botToken: event.target.value })}
                 />
               </AdminIntegrationField>
@@ -464,15 +482,15 @@ export function AdminIntegrationsPanel({ t, onError, onSuccess }: AdminIntegrati
               <AdminIntegrationField
                 wide
                 endAction={
-                  <Tooltip label={t('adminBotGenerateSecret')}>
-                    <button
-                      className="admin-integration-field-action"
-                      type="button"
-                      onClick={() => updateDraft({ secret: generateWebhookSecret() })}
-                    >
-                      <WandSparkles size={14} />
-                    </button>
-                  </Tooltip>
+                  <PasswordInputActions
+                    visible={vkSecretVisibility.visible}
+                    onToggle={vkSecretVisibility.toggle}
+                    showLabel={t('showPassword')}
+                    hideLabel={t('hidePassword')}
+                    generateLabel={t('adminBotGenerateSecret')}
+                    onGenerate={() => updateDraft({ secret: generateWebhookSecret() })}
+                    generateIcon={<WandSparkles size={12} aria-hidden />}
+                  />
                 }
                 icon={<ShieldCheck size={14} />}
                 label={t('adminBotSecret')}
@@ -485,12 +503,20 @@ export function AdminIntegrationsPanel({ t, onError, onSuccess }: AdminIntegrati
                     activeSettings?.secretHint,
                     t('aiApiKeyPlaceholder'),
                   )}
-                  type="password"
+                  type={vkSecretVisibility.inputType}
                   onChange={(event) => updateDraft({ secret: event.target.value })}
                 />
               </AdminIntegrationField>
               <AdminIntegrationField
                 wide
+                endAction={
+                  <PasswordInputActions
+                    visible={vkTokenVisibility.visible}
+                    onToggle={vkTokenVisibility.toggle}
+                    showLabel={t('showPassword')}
+                    hideLabel={t('hidePassword')}
+                  />
+                }
                 icon={<KeyRound size={14} />}
                 label={t('adminVkAccessToken')}
               >
@@ -502,7 +528,7 @@ export function AdminIntegrationsPanel({ t, onError, onSuccess }: AdminIntegrati
                     activeSettings?.accessTokenHint,
                     t('aiApiKeyPlaceholder'),
                   )}
-                  type="password"
+                  type={vkTokenVisibility.inputType}
                   onChange={(event) => updateDraft({ accessToken: event.target.value })}
                 />
               </AdminIntegrationField>

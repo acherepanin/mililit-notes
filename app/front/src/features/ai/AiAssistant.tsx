@@ -31,8 +31,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, aiApi } from '../../api';
 import { CustomSelect, type SelectOption } from '../../components/CustomSelect';
 import { IconButton } from '../../components/IconButton';
+import { PasswordVisibilityToggle } from '../../components/PasswordInputActions';
 import { Tooltip } from '../../components/Tooltip';
 import { TooltipText } from '../../components/TooltipText';
+import { usePasswordVisibility } from '../../hooks/usePasswordVisibility';
 import type { ToastKind } from '../../components/useToasts';
 import type { Translator } from '../../i18n';
 import type {
@@ -163,6 +165,7 @@ export function AiAssistant({
     {},
   );
   const [draft, setDraft] = useState<DraftSettings>(() => createDraft(settings));
+  const apiKeyVisibility = usePasswordVisibility();
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
   const speechRecognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -1019,7 +1022,7 @@ export function AiAssistant({
                             <input
                               value={draft.apiKey}
                               name="apiKey"
-                              type="password"
+                              type={apiKeyVisibility.inputType}
                               autoComplete="new-password"
                               placeholder={savedHintPlaceholder(
                                 t,
@@ -1030,14 +1033,22 @@ export function AiAssistant({
                                 setDraft((current) => ({ ...current, apiKey: event.target.value }))
                               }
                             />
-                            <IconButton
-                              className="ai-key-clear"
-                              label={t('delete')}
-                              icon={<Trash2 size={13} />}
-                              variant="danger"
-                              disabled={!settings?.hasApiKey}
-                              onClick={() => void clearKey()}
-                            />
+                            <div className="ai-key-row__actions">
+                              <PasswordVisibilityToggle
+                                visible={apiKeyVisibility.visible}
+                                onToggle={apiKeyVisibility.toggle}
+                                showLabel={t('showPassword')}
+                                hideLabel={t('hidePassword')}
+                              />
+                              <IconButton
+                                className="ai-key-clear"
+                                label={t('delete')}
+                                icon={<Trash2 size={13} />}
+                                variant="danger"
+                                disabled={!settings?.hasApiKey}
+                                onClick={() => void clearKey()}
+                              />
+                            </div>
                           </div>
                         </label>
                       </div>

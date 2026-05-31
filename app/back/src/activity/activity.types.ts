@@ -13,7 +13,10 @@ export type ActivityAction =
   | 'ai.bot.message'
   | 'admin.user.create'
   | 'admin.user.update'
-  | 'admin.user.delete';
+  | 'admin.user.delete'
+  | 'subscription.purchase'
+  | 'subscription.renew'
+  | 'subscription.admin_assign';
 
 export interface ActivityRecord {
   id: number;

@@ -206,6 +206,9 @@ The system is mostly flat. Depth comes from tonal layering, borders, backdrop fi
 ### Shared UI primitives (extracted)
 
 - **Theme tokens** (`app/front/src/themes.css`): semantic CSS variables per theme (`dark`, `light`, `aurora`, `ember`, `ocean`). Import from `styles.css`; do not duplicate palette values in components.
+- **Focus tokens:** `--focus-ring-width`, `--focus-ring-offset`, `--focus-ring-color`. Applied globally via `:focus-visible` in `styles.css`. Composite controls (`field-shell`, `search-box`) use `:focus-within` on the shell and suppress inner input outlines.
+- **Touch tokens:** `--touch-target-min` (44px). Applied on coarse pointers and mobile breakpoints for icon actions, subscription controls, and sidebar items.
+- **Z-index scale:** `--z-base` (1), `--z-sidebar` (30), `--z-sticky` (40), `--z-dropdown` (120), `--z-overlay` (260), `--z-modal-backdrop` (1800), `--z-modal` (1850), `--z-toast` (1900), `--z-tooltip` (2000). Portal menus and modals must use these tokens, not ad-hoc values.
 - **`usePortalMenu`**: positions portal menus, handles resize/scroll, outside click, and Escape. Use for any anchored listbox/popover.
 - **`PortalListbox`**: standard option list with `custom-select__menu` / `custom-select__option` styling. Pair with `usePortalMenu` when the trigger is custom (settings theme row, tag filter).
 - **`CustomSelect`**: labeled dropdown built on `usePortalMenu` + `PortalListbox`.

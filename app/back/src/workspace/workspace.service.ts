@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 
 import { AttachmentFilesService } from '../infra/attachment-files.service';
+import { hideSecretValuesInHtml, redactSecretText } from '../common/secret-redaction.util';
 import { DatabaseService } from '../infra/database.service';
 import { bindSqlList } from '../infra/sql';
 import { CreateNoteDto } from '../notes/dto/create-note.dto';
@@ -18,6 +19,7 @@ import { mapNote } from '../notes/notes.mapper';
 import { NotesService } from '../notes/notes.service';
 import type { NoteRecord } from '../notes/notes.types';
 import { SecretFieldCryptoService } from '../notes/secret-field-crypto.service';
+import { EntitlementsService } from '../subscriptions/entitlements.service';
 import type {
   AttachmentFolderDto,
   CreateNoteFromTemplateDto,
@@ -126,6 +128,7 @@ export class WorkspaceService {
     @Inject(NotesService) private readonly notesService: NotesService,
     @Inject(SecretFieldCryptoService)
     private readonly secretFieldCryptoService: SecretFieldCryptoService,
+    @Inject(EntitlementsService) private readonly entitlementsService: EntitlementsService,
     @Inject(ConfigService) configService: ConfigService,
   ) {
     this.uploadDir =
@@ -159,6 +162,7 @@ export class WorkspaceService {
   }
 
   createTemplate(userId: number, dto: TemplateDto): NoteTemplateResponse {
+    this.entitlementsService.assertTemplatesAccess(userId);
     const now = new Date().toISOString();
     const result = this.databaseService.connection
       .prepare(
@@ -178,6 +182,7 @@ export class WorkspaceService {
   }
 
   updateTemplate(userId: number, id: number, dto: TemplateDto): NoteTemplateResponse {
+    this.entitlementsService.assertTemplatesAccess(userId);
     this.getTemplateRecord(userId, id, { writable: true });
     this.databaseService.connection
       .prepare(
@@ -199,6 +204,7 @@ export class WorkspaceService {
   }
 
   deleteTemplate(userId: number, id: number): { id: number } {
+    this.entitlementsService.assertTemplatesAccess(userId);
     this.getTemplateRecord(userId, id, { writable: true });
     this.databaseService.connection
       .prepare('DELETE FROM note_templates WHERE id = @id AND user_id = @userId')
@@ -207,6 +213,7 @@ export class WorkspaceService {
   }
 
   createNoteFromTemplate(userId: number, dto: CreateNoteFromTemplateDto) {
+    this.entitlementsService.assertTemplatesAccess(userId);
     const template = this.getTemplateRecord(userId, dto.templateId);
     const created = this.notesService.create(userId, {
       name: template.name,
@@ -219,6 +226,7 @@ export class WorkspaceService {
   }
 
   exportJson(userId: number): ExportResponse {
+    this.entitlementsService.assertExportImportAccess(userId);
     const rows = this.databaseService.connection
       .prepare(
         `
@@ -239,6 +247,7 @@ export class WorkspaceService {
   }
 
   importJson(userId: number, dto: ImportNotesDto): { imported: number } {
+    this.entitlementsService.assertExportImportAccess(userId);
     const notes = this.normalizeImportNotes(dto.notes);
     const transaction = this.databaseService.connection.transaction(() => {
       const idMap = new Map<number, number>();
@@ -319,6 +328,7 @@ export class WorkspaceService {
     if (content.byteLength > this.maxUploadBytes) {
       throw new BadRequestException('File is too large');
     }
+    this.entitlementsService.assertStorageCapacity(userId, content.byteLength);
 
     const fileName = this.sanitizeAttachmentName(dto.fileName);
     const extension = extname(fileName).toLowerCase();
@@ -549,6 +559,7 @@ export class WorkspaceService {
     }
 
     const content = readFileSync(source.storage_path);
+    this.entitlementsService.assertStorageCapacity(userId, content.byteLength);
     const extension = extname(source.file_name).toLowerCase();
     const storageName = `${userId}-${Date.now()}-${randomBytes(8).toString('hex')}${extension}`;
     const storagePath = join(this.uploadDir, storageName);
@@ -744,6 +755,7 @@ export class WorkspaceService {
   }
 
   createShareLink(userId: number, noteId: number, dto: CreateShareLinkDto): ShareLinkResponse {
+    this.entitlementsService.assertPublicShareAccess(userId);
     this.requireNote(userId, noteId);
     const token = randomBytes(24).toString('base64url');
     const publicUrl = `/share/${token}`;
@@ -834,8 +846,8 @@ export class WorkspaceService {
         name: note.name,
         contentHtml: row.include_secrets
           ? note.contentHtml
-          : this.hideSecretValues(note.contentHtml),
-        contentText: note.contentText,
+          : hideSecretValuesInHtml(note.contentHtml),
+        contentText: row.include_secrets ? note.contentText : redactSecretText(note.contentText),
         updatedAt: note.updatedAt,
       },
       expiresAt: row.expires_at,
@@ -1428,13 +1440,6 @@ export class WorkspaceService {
     };
   }
 
-  private hideSecretValues(contentHtml: string): string {
-    return contentHtml.replace(/<div\b(?=[^>]*data-copy-field)[^>]*>/g, (tag) => {
-      const isSecret = /\sdata-kind=(["'])(password|credential|token)\1/i.test(tag);
-
-      return isSecret ? tag.replace(/\sdata-value=(["'])[^"']*\1/i, ' data-value=""') : tag;
-    });
-  }
 
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');

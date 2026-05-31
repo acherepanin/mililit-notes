@@ -34,8 +34,9 @@ export class ActivityService {
       });
   }
 
-  list(limit = 80): ActivityResponse[] {
-    const normalizedLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 200) : 80;
+  list(limit = 100, options?: { excludeSubscription?: boolean }): ActivityResponse[] {
+    const normalizedLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 200) : 100;
+    const excludeSubscription = options?.excludeSubscription ?? false;
     const rows = this.databaseService.connection
       .prepare(
         `
@@ -46,6 +47,7 @@ export class ActivityService {
           FROM activity_logs
           LEFT JOIN users actor ON actor.id = activity_logs.actor_id
           LEFT JOIN users target_user ON target_user.id = activity_logs.user_id
+          ${excludeSubscription ? "WHERE activity_logs.action NOT LIKE 'subscription.%'" : ''}
           ORDER BY activity_logs.created_at DESC, activity_logs.id DESC
           LIMIT @limit
         `,

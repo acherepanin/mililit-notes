@@ -5,7 +5,7 @@
 Приложение разделено на два TypeScript-проекта:
 
 - `app/back` - NestJS backend, SQLite, REST API, auth, роли, админские операции, отдача frontend-статики.
-- `app/front` - React + Vite SPA, Tiptap editor, дерево заметок, админ-панель, темы и локализация.
+- `app/front` - React + Vite SPA, React Router, Tiptap editor, дерево заметок, админ-панель, личный кабинет, подписки, темы и локализация.
 
 Production-поток:
 
@@ -17,13 +17,15 @@ Production-поток:
 
 ### Модули
 
-- `AppModule` - подключает `ConfigModule`, `ServeStaticModule`, `AuthModule`, `AdminModule`, `AiModule`, `DatabaseModule`, `NotesModule`, `HealthController`.
+- `AppModule` - подключает `ConfigModule`, `ServeStaticModule`, `AuthModule`, `SubscriptionsModule`, `AdminModule`, `MonitoringModule`, `AiModule`, `DatabaseModule`, `NotesModule`, `HealthController`.
 - `DatabaseModule` - singleton `DatabaseService` and shared `AttachmentFilesService`.
-- `AuthModule` - login, token verification, текущий пользователь, preferences.
+- `AuthModule` - login, register, token verification, профиль, пароль, текущий пользователь, preferences; глобальный `AuthGuard` через `APP_GUARD`, публичные routes помечаются `@Public()`.
+- `SubscriptionsModule` - тарифы, активные подписки, mock checkout, `EntitlementsService` (AI, файлы, лимит хранилища; admin bypass).
 - `NotesModule` - CRUD и move заметок текущего пользователя.
 - `WorkspaceModule` - теги, корзина, версии, шаблоны, экспорт/импорт, вложения и публичные ссылки.
 - Backend увеличивает JSON body limit до 30 MB для base64-загрузки вложений; бизнес-лимит размера файла задается `MAX_UPLOAD_SIZE_MB`.
-- `AdminModule` - пользователи, история действий и статистика; агрегаты статистики вынесены в `AdminStatsService`.
+- `AdminModule` - пользователи и статистика; агрегаты статистики вынесены в `AdminStatsService`.
+- `MonitoringModule` - глобальный interceptor, in-memory метрики, persistent error log и admin API `/admin/monitoring/*`.
 - `ActivityModule` - запись и чтение audit-событий.
 - `AiModule` - изолированный AI-слой: настройки provider, шифрование AI API key, синхронизация моделей, локальный каталог моделей, chat gateway через OpenAI-compatible API, tool registry для действий с заметками и runtime Telegram/VK webhook-ботов.
 
@@ -183,6 +185,23 @@ base64urlPayload.signature
 - `idx_ai_usage_logs_created_user`
 - `idx_ai_bot_usage_logs_created`
 
+### `request_error_logs`
+
+| Поле          | Тип                                               | Описание                         |
+| ------------- | ------------------------------------------------- | -------------------------------- |
+| `id`          | `INTEGER PRIMARY KEY AUTOINCREMENT`               | ID                               |
+| `user_id`     | `INTEGER REFERENCES users(id) ON DELETE SET NULL` | Пользователь запроса             |
+| `method`      | `TEXT NOT NULL`                                   | HTTP-метод                       |
+| `path`        | `TEXT NOT NULL`                                   | Нормализованный путь без query   |
+| `status_code` | `INTEGER NOT NULL`                                | HTTP-код                         |
+| `message`     | `TEXT`                                            | Сообщение ошибки (до 2000 симв.) |
+| `error_name`  | `TEXT`                                            | Имя класса ошибки                |
+| `error_body`  | `TEXT NOT NULL DEFAULT '{}'`                      | JSON-тело с редактированием      |
+| `duration_ms` | `INTEGER NOT NULL`                                | Время обработки                  |
+| `created_at`  | `TEXT NOT NULL`                                   | Время                            |
+
+Записи старше 90 дней удаляются при старте сервиса. 401/404 и частые UI-запросы не сохраняются.
+
 Для активных публичных ссылок используется индекс `idx_share_links_active`.
 
 ## Backend Services
@@ -236,10 +255,21 @@ base64urlPayload.signature
 - создание пользователя;
 - изменение роли и пароля;
 - удаление пользователя;
-- статистику;
-- историю действий.
+- статистику.
 
 Backend не дает удалить собственный admin-аккаунт и не дает оставить систему без единого admin.
+
+### `MonitoringModule`
+
+Глобальный `MonitoringInterceptor` собирает метрики запросов и ошибки:
+
+- `RequestMetricsService` — in-memory сэмплы (7 дней, до 12 000 записей) для `/admin/monitoring/performance`;
+- `RequestErrorLogService` — persistent-лог в `request_error_logs` (90 дней, редактирование чувствительных полей);
+- `MonitoringService` — агрегация actions/subscriptions/errors/performance для admin API.
+
+Admin endpoints: `/api/admin/monitoring/actions`, `/subscriptions`, `/errors`, `/performance`. Все защищены `AdminGuard`.
+
+События подписок в actions исключаются (`subscription.*`); отдельный SQL-union по `subscription_orders` и `user_subscriptions` питает вкладку subscriptions.
 
 ### `ActivityService`
 
@@ -378,8 +408,11 @@ Bot runtime вызывает тот же `chat` и `executeAction`, но пер�
 
 ### Основные файлы
 
-- `src/App.tsx` - легкий bootstrap/auth слой: login screen, guest theme/language, toast-host и lazy-загрузка рабочей области после входа.
-- `features/app/AuthenticatedApp.tsx` - рабочая область после авторизации: notes workspace, editor, sidebar, командная палитра, модалки заметок и lazy-загрузка админки.
+- `src/App.tsx` - `BrowserRouter`, публичные `/login`, `/register`, `/verify-email`, `/share/:token`, guard `RequireAuth` / `RequireAdmin`, lazy `AuthenticatedApp`.
+- `routes/RequireAuth.tsx`, `routes/RequireAdmin.tsx` - защита маршрутов.
+- `features/auth/RegisterPage.tsx`, `features/account/AccountPage.tsx` - регистрация и личный кабинет.
+- `features/admin/AdminApp.tsx` - оболочка админки по `/admin/*`.
+- `features/app/AuthenticatedApp.tsx` - рабочая область `/notes/*`: editor, sidebar, AI, модалки; без встроенной админки.
 - `features/app/CommandPalette.tsx` - кастомная палитра быстрых команд `Ctrl+Shift+P` через portal: поиск, disabled-состояния, tooltip для длинных строк и запуск действий текущего workspace.
 - `features/ai/AiAssistant.tsx` - изолированный AI widget: плавающая кнопка, чат, голосовой ввод через браузерный SpeechRecognition, настройки provider, переключатель подтверждения web-действий, пользовательские настройки Telegram/VK-ботов и карточки подтверждения AI-действий.
 - `features/ai/AiBotAccessMenu.tsx` - dropdown пользовательских доступов Telegram/VK-ботов: режим работы, доступ к данным, действия, секреты и дневные лимиты.
@@ -483,3 +516,15 @@ Fallback для lazy-загрузки использует существующ�
 - `test-results`
 - `dist`
 - `public`
+
+## Безопасность
+
+- Все endpoints заметок, вложений, тегов, подписок и профиля scoped по `request.user.id` из Bearer token; подстановка чужого `userId` в URL не даёт доступ к данным.
+- Глобальный `AuthGuard` защищает все API routes по умолчанию; публичные исключения: `GET /api/health`, `POST /api/auth/login`, `POST /api/auth/register`, `GET /api/auth/register/pending/:id`, `GET /api/auth/verify-email`, `GET /api/share/:token`, webhook Telegram/VK (`@Public()`).
+- Публичная ссылка `/api/share/:token` отдаёт только одну заметку по токену; при `includeSecrets=false` маскируются секретные поля в `contentHtml` и `contentText`.
+- `ValidationPipe` с `whitelist` и `forbidNonWhitelisted` на входе API.
+- В production обязателен сильный `AUTH_SECRET`; mock checkout (`/api/subscription/checkout`) отключён, если не задан `ALLOW_MOCK_CHECKOUT=true`.
+- Webhook Telegram/VK требуют настроенный secret; пустой secret отклоняется.
+- Загрузка вложений ограничена расширениями и размером; файлы хранятся вне публичного каталога и отдаются через авторизованный endpoint.
+- Notes AI mutation tools выполняются только после подтверждения пользователя в UI или боте; readonly tools не изменяют данные.
+- Общие утилиты маскировки секретов: `app/back/src/common/secret-redaction.util.ts`.

@@ -93,7 +93,7 @@ function formatCodeBlockNode(editor: Editor, position: number): boolean {
     return false;
   }
 
-  const language = (range.node.attrs.language as string | null | undefined) || autoCodeLanguage;
+  const language = (range.node.attrs?.language as string | null | undefined) || autoCodeLanguage;
   const formatted = formatCodeText(range.node.textContent, language);
 
   if (formatted === range.node.textContent) {

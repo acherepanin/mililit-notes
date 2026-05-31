@@ -180,6 +180,24 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_logs(created_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_logs(user_id, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS request_error_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        method TEXT NOT NULL,
+        path TEXT NOT NULL,
+        status_code INTEGER NOT NULL,
+        message TEXT,
+        error_name TEXT,
+        error_body TEXT NOT NULL DEFAULT '{}',
+        duration_ms INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_request_errors_created
+        ON request_error_logs(created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_request_errors_status
+        ON request_error_logs(status_code, created_at DESC);
+
       CREATE TABLE IF NOT EXISTS ai_user_settings (
         user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         enabled INTEGER NOT NULL DEFAULT 0,
@@ -560,6 +578,145 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     this.createNotesIndexes();
     this.createQueryIndexes();
     this.createFtsTable();
+    this.ensureUserProfileColumns();
+    this.ensureSubscriptionSchema();
+    this.ensurePendingRegistrationsSchema();
+  }
+
+  private ensurePendingRegistrationsSchema(): void {
+    this.connection.exec(`
+      CREATE TABLE IF NOT EXISTS pending_registrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        email TEXT NOT NULL,
+        first_name TEXT,
+        last_name TEXT,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        verified_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_pending_registrations_username
+        ON pending_registrations(lower(username));
+
+      CREATE INDEX IF NOT EXISTS idx_pending_registrations_email
+        ON pending_registrations(lower(email));
+
+      CREATE INDEX IF NOT EXISTS idx_pending_registrations_expires
+        ON pending_registrations(expires_at);
+    `);
+  }
+
+  private ensureUserProfileColumns(): void {
+    this.ensureColumn('users', 'email', 'ALTER TABLE users ADD COLUMN email TEXT');
+    this.ensureColumn('users', 'first_name', 'ALTER TABLE users ADD COLUMN first_name TEXT');
+    this.ensureColumn('users', 'last_name', 'ALTER TABLE users ADD COLUMN last_name TEXT');
+    this.ensureColumn('users', 'patronymic', 'ALTER TABLE users ADD COLUMN patronymic TEXT');
+    this.ensureColumn('users', 'birth_date', 'ALTER TABLE users ADD COLUMN birth_date TEXT');
+  }
+
+  private ensureSubscriptionSchema(): void {
+    this.connection.exec(`
+      CREATE TABLE IF NOT EXISTS subscription_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        description TEXT,
+        price_cents INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'rub',
+        billing_period TEXT NOT NULL DEFAULT 'month',
+        entitlements_json TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS user_subscriptions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan_id INTEGER NOT NULL REFERENCES subscription_plans(id),
+        status TEXT NOT NULL DEFAULT 'active',
+        started_at TEXT NOT NULL,
+        expires_at TEXT,
+        cancelled_at TEXT,
+        source TEXT NOT NULL DEFAULT 'migration',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_status
+        ON user_subscriptions(user_id, status);
+
+      CREATE TABLE IF NOT EXISTS subscription_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan_id INTEGER NOT NULL REFERENCES subscription_plans(id),
+        status TEXT NOT NULL DEFAULT 'pending',
+        amount_cents INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'rub',
+        payment_provider TEXT NOT NULL DEFAULT 'mock',
+        payment_external_id TEXT,
+        paid_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    this.ensureColumn(
+      'subscription_orders',
+      'term_months',
+      'ALTER TABLE subscription_orders ADD COLUMN term_months INTEGER NOT NULL DEFAULT 1',
+    );
+    this.ensureColumn(
+      'subscription_orders',
+      'checkout_mode',
+      "ALTER TABLE subscription_orders ADD COLUMN checkout_mode TEXT NOT NULL DEFAULT 'purchase'",
+    );
+    this.ensureColumn(
+      'subscription_orders',
+      'discount_percent',
+      'ALTER TABLE subscription_orders ADD COLUMN discount_percent INTEGER NOT NULL DEFAULT 0',
+    );
+    this.ensureColumn(
+      'subscription_plans',
+      'icon_key',
+      "ALTER TABLE subscription_plans ADD COLUMN icon_key TEXT NOT NULL DEFAULT 'package'",
+    );
+    this.ensureColumn(
+      'subscription_plans',
+      'card_color',
+      "ALTER TABLE subscription_plans ADD COLUMN card_color TEXT NOT NULL DEFAULT 'sky'",
+    );
+    this.ensureColumn(
+      'subscription_plans',
+      'card_art',
+      "ALTER TABLE subscription_plans ADD COLUMN card_art TEXT NOT NULL DEFAULT 'bubbles'",
+    );
+    this.ensureColumn(
+      'subscription_plans',
+      'is_hidden',
+      'ALTER TABLE subscription_plans ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0',
+    );
+    this.connection
+      .prepare(
+        `
+          UPDATE subscription_plans
+          SET currency = 'rub'
+          WHERE lower(currency) IN ('usd', 'rur', '')
+        `,
+      )
+      .run();
+    this.connection
+      .prepare(
+        `
+          UPDATE subscription_orders
+          SET currency = 'rub'
+          WHERE lower(currency) IN ('usd', 'rur', '')
+        `,
+      )
+      .run();
   }
 
   private seedIfEmpty(): void {
@@ -594,6 +751,40 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
 
   private seedAdminUser(): number {
+    const username = this.configService.get<string>('ADMIN_USERNAME')?.trim() || 'admin';
+    const password = this.configService.get<string>('ADMIN_PASSWORD') ?? 'admin';
+    const now = new Date().toISOString();
+
+    const existingByUsername = this.connection
+      .prepare('SELECT id FROM users WHERE lower(username) = lower(@username)')
+      .get({ username }) as { id: number } | undefined;
+
+    if (existingByUsername) {
+      const nodeEnv = this.configService.get<string>('NODE_ENV')?.trim() || 'development';
+      if (nodeEnv === 'development') {
+        this.connection
+          .prepare(
+            `
+              UPDATE users
+              SET role = 'admin',
+                  password_hash = @passwordHash,
+                  updated_at = @now
+              WHERE id = @id
+            `,
+          )
+          .run({
+            id: existingByUsername.id,
+            passwordHash: hashPassword(password),
+            now,
+          });
+      } else {
+        this.connection
+          .prepare("UPDATE users SET role = 'admin' WHERE id = @id AND role != 'admin'")
+          .run({ id: existingByUsername.id });
+      }
+      return existingByUsername.id;
+    }
+
     const existing = this.connection
       .prepare('SELECT id FROM users ORDER BY id ASC LIMIT 1')
       .get() as { id: number } | undefined;
@@ -606,10 +797,6 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
         });
       return existing.id;
     }
-
-    const username = this.configService.get<string>('ADMIN_USERNAME')?.trim() || 'admin';
-    const password = this.configService.get<string>('ADMIN_PASSWORD') ?? 'admin';
-    const now = new Date().toISOString();
 
     this.connection
       .prepare(

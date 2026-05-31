@@ -3,6 +3,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { ActivityService } from '../activity/activity.service';
 import { DatabaseService } from '../infra/database.service';
 import { bindSqlList } from '../infra/sql';
+import { EntitlementsService } from '../subscriptions/entitlements.service';
 import type { CreateNoteDto } from './dto/create-note.dto';
 import type { MoveNoteDto } from './dto/move-note.dto';
 import type { UpdateNoteDto } from './dto/update-note.dto';
@@ -40,6 +41,7 @@ export class NotesService {
     @Inject(ActivityService) private readonly activityService: ActivityService,
     @Inject(SecretFieldCryptoService)
     private readonly secretFieldCryptoService: SecretFieldCryptoService,
+    @Inject(EntitlementsService) private readonly entitlementsService: EntitlementsService,
   ) {}
 
   getTree(userId: number): NoteTreeNode[] {
@@ -91,6 +93,7 @@ export class NotesService {
   }
 
   create(userId: number, dto: CreateNoteDto): NoteResponse {
+    this.entitlementsService.assertNoteCreationAllowed(userId);
     const name = this.normalizeName(dto.name);
     const parentId = dto.parentId ?? null;
     if (parentId !== null) {
@@ -189,7 +192,16 @@ export class NotesService {
 
   update(userId: number, id: number, dto: UpdateNoteDto): NoteResponse {
     const existing = this.requireNote(userId, id);
-    this.createVersion(existing);
+    if (dto.contentHtml !== undefined || dto.contentText !== undefined) {
+      const contentBytes = Math.max(
+        dto.contentHtml !== undefined ? Buffer.byteLength(dto.contentHtml, 'utf8') : 0,
+        dto.contentText !== undefined ? Buffer.byteLength(dto.contentText, 'utf8') : 0,
+      );
+      this.entitlementsService.assertNoteContentSize(userId, contentBytes);
+    }
+    if (this.entitlementsService.isVersioningEnabled(userId)) {
+      this.createVersion(existing);
+    }
 
     const fields: string[] = ['updated_at = @updatedAt'];
     const params: Record<string, string | number | null> = {
@@ -435,6 +447,7 @@ export class NotesService {
   }
 
   listVersions(userId: number, noteId: number): NoteVersionResponse[] {
+    this.entitlementsService.assertVersioningAccess(userId);
     this.requireNote(userId, noteId, { includeDeleted: true });
     this.pruneVersions(userId, noteId);
     const rows = this.databaseService.connection
@@ -453,6 +466,7 @@ export class NotesService {
   }
 
   restoreVersion(userId: number, noteId: number, versionId: number): NoteResponse {
+    this.entitlementsService.assertVersioningAccess(userId);
     const current = this.requireNote(userId, noteId, { includeDeleted: true });
     const version = this.databaseService.connection
       .prepare(
@@ -464,7 +478,9 @@ export class NotesService {
       throw new NotFoundException(`Version ${versionId} was not found`);
     }
 
-    this.createVersion(current);
+    if (this.entitlementsService.isVersioningEnabled(userId)) {
+      this.createVersion(current);
+    }
     const updatedAt = new Date().toISOString();
     this.databaseService.connection
       .prepare(

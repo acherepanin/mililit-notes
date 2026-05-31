@@ -7,14 +7,20 @@ import {
 } from '@nestjs/common';
 
 import { ActivityService } from '../activity/activity.service';
-import type { ActivityResponse } from '../activity/activity.types';
 import { hashPassword } from '../auth/password';
+import {
+  assertValidEmail,
+  assertValidPassword,
+  assertValidUsername,
+  normalizeUsername,
+} from '../auth/username.util';
 import { AttachmentFilesService } from '../infra/attachment-files.service';
 import { DatabaseService } from '../infra/database.service';
 import { AdminStatsService } from './admin-stats.service';
 import type { CreateUserDto } from './dto/create-user.dto';
 import type { UpdateUserDto } from './dto/update-user.dto';
 import type { AdminStatsResponse, AdminUserRecord, AdminUserResponse } from './admin.types';
+import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
 @Injectable()
 export class AdminService {
@@ -24,16 +30,50 @@ export class AdminService {
     @Inject(AttachmentFilesService)
     private readonly attachmentFilesService: AttachmentFilesService,
     @Inject(AdminStatsService) private readonly adminStatsService: AdminStatsService,
+    @Inject(SubscriptionsService) private readonly subscriptionsService: SubscriptionsService,
   ) {}
 
   listUsers(): AdminUserResponse[] {
     const rows = this.databaseService.connection
       .prepare(
         `
-          SELECT users.*, COUNT(notes.id) as notes_count
+          SELECT
+            users.*,
+            (
+              SELECT COUNT(*)
+              FROM notes
+              WHERE notes.user_id = users.id
+            ) AS notes_count,
+            (
+              SELECT us.plan_id
+              FROM user_subscriptions us
+              WHERE us.user_id = users.id
+                AND us.status = 'active'
+                AND (us.expires_at IS NULL OR us.expires_at > datetime('now'))
+              ORDER BY us.id DESC
+              LIMIT 1
+            ) AS subscription_plan_id,
+            (
+              SELECT sp.name
+              FROM user_subscriptions us
+              INNER JOIN subscription_plans sp ON sp.id = us.plan_id
+              WHERE us.user_id = users.id
+                AND us.status = 'active'
+                AND (us.expires_at IS NULL OR us.expires_at > datetime('now'))
+              ORDER BY us.id DESC
+              LIMIT 1
+            ) AS subscription_plan_name,
+            (
+              SELECT sp.icon_key
+              FROM user_subscriptions us
+              INNER JOIN subscription_plans sp ON sp.id = us.plan_id
+              WHERE us.user_id = users.id
+                AND us.status = 'active'
+                AND (us.expires_at IS NULL OR us.expires_at > datetime('now'))
+              ORDER BY us.id DESC
+              LIMIT 1
+            ) AS subscription_plan_icon_key
           FROM users
-          LEFT JOIN notes ON notes.user_id = users.id
-          GROUP BY users.id
           ORDER BY lower(users.username) ASC
         `,
       )
@@ -43,14 +83,20 @@ export class AdminService {
   }
 
   createUser(actorId: number, dto: CreateUserDto): AdminUserResponse {
-    const username = this.normalizeUsername(dto.username);
+    const username = normalizeUsername(dto.username);
+    const email = dto.email.trim().toLowerCase();
+    assertValidUsername(username);
+    assertValidPassword(dto.password);
+    assertValidEmail(email);
     this.ensureUsernameAvailable(username);
+    this.ensureEmailAvailable(email);
+
     const now = new Date().toISOString();
     const result = this.databaseService.connection
       .prepare(
         `
-          INSERT INTO users (username, password_hash, role, language, theme, created_at, updated_at)
-          VALUES (@username, @passwordHash, @role, @language, @theme, @now, @now)
+          INSERT INTO users (username, password_hash, role, language, theme, email, created_at, updated_at)
+          VALUES (@username, @passwordHash, @role, @language, @theme, @email, @now, @now)
         `,
       )
       .run({
@@ -59,9 +105,11 @@ export class AdminService {
         role: dto.role ?? 'user',
         language: dto.language ?? 'ru',
         theme: dto.theme ?? 'dark',
+        email,
         now,
       });
     const user = this.getUserById(Number(result.lastInsertRowid));
+    this.subscriptionsService.ensureDefaultSubscription(user.id);
     this.activityService.record({
       actorId,
       userId: user.id,
@@ -132,10 +180,6 @@ export class AdminService {
     return { id };
   }
 
-  listActivity(limit?: number): ActivityResponse[] {
-    return this.activityService.list(limit);
-  }
-
   getStats(range?: string): AdminStatsResponse {
     return this.adminStatsService.getStats(range);
   }
@@ -144,11 +188,44 @@ export class AdminService {
     const row = this.databaseService.connection
       .prepare(
         `
-          SELECT users.*, COUNT(notes.id) as notes_count
+          SELECT
+            users.*,
+            (
+              SELECT COUNT(*)
+              FROM notes
+              WHERE notes.user_id = users.id
+            ) AS notes_count,
+            (
+              SELECT us.plan_id
+              FROM user_subscriptions us
+              WHERE us.user_id = users.id
+                AND us.status = 'active'
+                AND (us.expires_at IS NULL OR us.expires_at > datetime('now'))
+              ORDER BY us.id DESC
+              LIMIT 1
+            ) AS subscription_plan_id,
+            (
+              SELECT sp.name
+              FROM user_subscriptions us
+              INNER JOIN subscription_plans sp ON sp.id = us.plan_id
+              WHERE us.user_id = users.id
+                AND us.status = 'active'
+                AND (us.expires_at IS NULL OR us.expires_at > datetime('now'))
+              ORDER BY us.id DESC
+              LIMIT 1
+            ) AS subscription_plan_name,
+            (
+              SELECT sp.icon_key
+              FROM user_subscriptions us
+              INNER JOIN subscription_plans sp ON sp.id = us.plan_id
+              WHERE us.user_id = users.id
+                AND us.status = 'active'
+                AND (us.expires_at IS NULL OR us.expires_at > datetime('now'))
+              ORDER BY us.id DESC
+              LIMIT 1
+            ) AS subscription_plan_icon_key
           FROM users
-          LEFT JOIN notes ON notes.user_id = users.id
           WHERE users.id = @id
-          GROUP BY users.id
         `,
       )
       .get({ id }) as AdminUserRecord | undefined;
@@ -168,16 +245,50 @@ export class AdminService {
     if (row) {
       throw new ConflictException('Username is already used');
     }
+
+    const pending = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id
+          FROM pending_registrations
+          WHERE lower(username) = lower(@username)
+            AND verified_at IS NULL
+            AND expires_at > datetime('now')
+          LIMIT 1
+        `,
+      )
+      .get({ username }) as { id: number } | undefined;
+
+    if (pending) {
+      throw new ConflictException('Username is already used');
+    }
   }
 
-  private normalizeUsername(username: string): string {
-    const normalized = username.trim();
+  private ensureEmailAvailable(email: string): void {
+    const row = this.databaseService.connection
+      .prepare('SELECT id FROM users WHERE lower(email) = lower(@email)')
+      .get({ email }) as { id: number } | undefined;
 
-    if (normalized.length === 0) {
-      throw new BadRequestException('Username cannot be empty');
+    if (row) {
+      throw new ConflictException('Email is already registered');
     }
 
-    return normalized;
+    const pending = this.databaseService.connection
+      .prepare(
+        `
+          SELECT id
+          FROM pending_registrations
+          WHERE lower(email) = lower(@email)
+            AND verified_at IS NULL
+            AND expires_at > datetime('now')
+          LIMIT 1
+        `,
+      )
+      .get({ email }) as { id: number } | undefined;
+
+    if (pending) {
+      throw new ConflictException('Email is already registered');
+    }
   }
 
   private countAdmins(): number {
@@ -201,6 +312,9 @@ export class AdminService {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       notesCount: row.notes_count,
+      subscriptionPlanId: row.subscription_plan_id ?? null,
+      subscriptionPlanName: row.subscription_plan_name ?? null,
+      subscriptionPlanIconKey: row.subscription_plan_icon_key ?? null,
     };
   }
 }

@@ -10,6 +10,9 @@ export interface AdminUserRecord {
   created_at: string;
   updated_at: string;
   notes_count: number;
+  subscription_plan_id: number | null;
+  subscription_plan_name: string | null;
+  subscription_plan_icon_key: string | null;
 }
 
 export interface AdminUserResponse {
@@ -22,6 +25,9 @@ export interface AdminUserResponse {
   createdAt: string;
   updatedAt: string;
   notesCount: number;
+  subscriptionPlanId: number | null;
+  subscriptionPlanName: string | null;
+  subscriptionPlanIconKey: string | null;
 }
 
 export interface AdminStatsResponse {

@@ -24,7 +24,7 @@ export function CodeBlockView({ editor, getPos, node, updateAttributes }: ReactN
   const [language, setLanguage] = useState<UserLanguage>(() => getDocumentLanguage());
   const [isEditable, setIsEditable] = useState(() => editor.isEditable);
   const t = useMemo(() => createTranslator(language), [language]);
-  const rawLanguage = (node.attrs.language as string | null | undefined) || autoCodeLanguage;
+  const rawLanguage = (node.attrs?.language as string | null | undefined) || autoCodeLanguage;
   const selectedLanguage: CodeLanguage = knownCodeLanguages.has(rawLanguage)
     ? (rawLanguage as CodeLanguage)
     : autoCodeLanguage;

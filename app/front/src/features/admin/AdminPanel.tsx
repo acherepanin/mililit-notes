@@ -1,45 +1,39 @@
 import {
-  ArrowUpDown,
   BarChart3,
   Bot,
-  History,
+  CreditCard,
   Menu,
+  Radar,
   RefreshCw,
   Search,
   UserPlus,
   UsersRound,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { NavLink, Navigate, useParams } from 'react-router-dom';
 
 import { adminApi } from '../../api';
 import { useConfirmDelete } from '../../components/DeleteConfirmationProvider';
 import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
-import { TooltipText } from '../../components/TooltipText';
 import type { Translator } from '../../i18n';
 import type {
-  ActivityLog,
   AdminStats,
   AdminStatsRange,
   AdminUser,
   CreateAdminUserPayload,
+  SubscriptionPlan,
   UpdateAdminUserPayload,
   UserLanguage,
 } from '../../types';
 import { useHorizontalWheel } from '../../utils/horizontalWheel';
-import { ActivityColumnFilter } from './ActivityColumnFilter';
-import {
-  emptyActivityFilters,
-  type ActivityFilterKey,
-  type ActivityFilters,
-  type ActivitySort,
-} from './adminFilters';
 import { AdminCreateUserModal } from './AdminCreateUserModal';
 import { AdminIntegrationsPanel } from './AdminIntegrationsPanel';
+import { AdminMonitoringView } from './AdminMonitoringView';
 import { AdminStatsView } from './AdminStatsView';
+import { AdminSubscriptionsPanel } from './AdminSubscriptionsPanel';
 import { AdminUserCard } from './AdminUserCard';
-
-type AdminTab = 'users' | 'activity' | 'stats' | 'integrations';
+import { ADMIN_REFRESH_TABS, parseAdminTab } from './adminTabs';
 
 interface AdminPanelProps {
   currentUserId: number;
@@ -52,6 +46,7 @@ interface AdminPanelProps {
 
 const emptyCreateForm: CreateAdminUserPayload = {
   username: '',
+  email: '',
   password: '',
   role: 'user',
 };
@@ -65,21 +60,19 @@ export function AdminPanel({
   onSuccess,
 }: AdminPanelProps) {
   const confirmDelete = useConfirmDelete();
-  const [tab, setTab] = useState<AdminTab>('users');
+  const { tab: tabParam } = useParams<{ tab: string }>();
+  const tab = parseAdminTab(tabParam);
   const tabsRef = useHorizontalWheel<HTMLDivElement>();
   const [users, setUsers] = useState<AdminUser[]>([]);
-  const [activity, setActivity] = useState<ActivityLog[]>([]);
+  const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [activityRange, setActivityRange] = useState<AdminStatsRange>('week');
+  const [monitoringReloadKey, setMonitoringReloadKey] = useState(0);
   const [createForm, setCreateForm] = useState<CreateAdminUserPayload>(emptyCreateForm);
   const [drafts, setDrafts] = useState<Record<number, UpdateAdminUserPayload>>({});
   const [userSearch, setUserSearch] = useState('');
-  const [activitySearch, setActivitySearch] = useState('');
-  const [activitySort, setActivitySort] = useState<ActivitySort>('newest');
-  const [activityFilters, setActivityFilters] = useState<ActivityFilters>(emptyActivityFilters);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const dateLocale = language === 'ru' ? 'ru-RU' : 'en-US';
   const roleOptions = useMemo(
     () => [
       { value: 'user' as const, label: t('roleUser') },
@@ -87,54 +80,16 @@ export function AdminPanel({
     ],
     [t],
   );
-  const getActivityActionLabel = useCallback(
-    (action: string) => {
-      switch (action) {
-        case 'auth.login':
-          return t('actionAuthLogin');
-        case 'notes.create':
-          return t('actionNoteCreate');
-        case 'notes.update':
-          return t('actionNoteUpdate');
-        case 'notes.move':
-          return t('actionNoteMove');
-        case 'notes.delete':
-          return t('actionNoteDelete');
-        case 'ai.settings.update':
-          return t('actionAiSettingsUpdate');
-        case 'ai.chat':
-          return t('actionAiChat');
-        case 'ai.tool.execute':
-          return t('actionAiToolExecute');
-        case 'ai.bot.settings.update':
-          return t('actionAiBotSettingsUpdate');
-        case 'ai.bot.connection.check':
-          return t('actionAiBotConnectionCheck');
-        case 'ai.bot.message':
-          return t('actionAiBotMessage');
-        case 'admin.user.create':
-          return t('actionAdminUserCreate');
-        case 'admin.user.update':
-          return t('actionAdminUserUpdate');
-        case 'admin.user.delete':
-          return t('actionAdminUserDelete');
-        default:
-          return action;
-      }
-    },
-    [t],
-  );
-
   const loadAdminData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [nextUsers, nextActivity, nextStats] = await Promise.all([
+      const [nextUsers, nextStats, nextPlans] = await Promise.all([
         adminApi.listUsers(),
-        adminApi.listActivity(),
         adminApi.getStats(activityRange),
+        adminApi.listSubscriptionPlans(),
       ]);
       setUsers(nextUsers);
-      setActivity(nextActivity);
+      setPlans(nextPlans);
       setStats(nextStats);
       setDrafts(
         Object.fromEntries(
@@ -159,13 +114,17 @@ export function AdminPanel({
   }, [loadAdminData]);
 
   const createUser = () => {
-    if (!createForm.username.trim() || !createForm.password.trim()) {
+    if (!createForm.username.trim() || !createForm.email.trim() || !createForm.password.trim()) {
       onError(t('adminFillUser'));
       return;
     }
 
     adminApi
-      .createUser(createForm)
+      .createUser({
+        ...createForm,
+        username: createForm.username.trim().toLowerCase(),
+        email: createForm.email.trim().toLowerCase(),
+      })
       .then(() => {
         setCreateForm(emptyCreateForm);
         setIsCreateOpen(false);
@@ -216,20 +175,6 @@ export function AdminPanel({
       })
       .catch(() => onError(t('adminDeleteError')));
   };
-  const toggleActivityFilter = (key: ActivityFilterKey, value: string) => {
-    setActivityFilters((current) => {
-      const selected = current[key];
-      const nextSelected = selected.includes(value)
-        ? selected.filter((item) => item !== value)
-        : [...selected, value];
-
-      return { ...current, [key]: nextSelected };
-    });
-  };
-  const clearActivityFilter = (key: ActivityFilterKey) => {
-    setActivityFilters((current) => ({ ...current, [key]: [] }));
-  };
-
   const visibleUsers = useMemo(() => {
     const query = userSearch.trim().toLowerCase();
 
@@ -239,60 +184,18 @@ export function AdminPanel({
 
     return users.filter((user) => user.username.toLowerCase().includes(query));
   }, [userSearch, users]);
-  const activityRows = useMemo(() => {
-    const query = activitySearch.trim().toLowerCase();
-    const matchesFilter = (key: ActivityFilterKey, value: string) =>
-      activityFilters[key].length === 0 || activityFilters[key].includes(value);
-    const filtered = activity.filter((item) => {
-      const user = item.userUsername ?? item.actorUsername ?? t('adminUnknownUser');
-      const action = getActivityActionLabel(item.action);
-      const actor = item.actorUsername ?? '-';
-      const target = `${item.targetType}${item.targetId ? ` #${item.targetId}` : ''}`;
-
-      if (
-        !matchesFilter('user', user) ||
-        !matchesFilter('action', action) ||
-        !matchesFilter('actor', actor) ||
-        !matchesFilter('target', target)
-      ) {
-        return false;
-      }
-
-      if (!query) {
-        return true;
-      }
-
-      const values = [user, action, actor, target];
-
-      return values.join(' ').toLowerCase().includes(query);
-    });
-    return [...filtered].sort((left, right) => {
-      const result = new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
-
-      return activitySort === 'newest' ? -result : result;
-    });
-  }, [activity, activityFilters, activitySearch, activitySort, getActivityActionLabel, t]);
-  const activityFilterOptions = useMemo(() => {
-    const unique = (values: string[]) =>
-      Array.from(new Set(values)).sort((left, right) => left.localeCompare(right, language));
-
-    return {
-      user: unique(
-        activity.map((item) => item.userUsername ?? item.actorUsername ?? t('adminUnknownUser')),
-      ),
-      action: unique(activity.map((item) => getActivityActionLabel(item.action))),
-      actor: unique(activity.map((item) => item.actorUsername ?? '-')),
-      target: unique(
-        activity.map((item) => `${item.targetType}${item.targetId ? ` #${item.targetId}` : ''}`),
-      ),
-    };
-  }, [activity, getActivityActionLabel, language, t]);
   const changeCreateForm = useCallback((patch: Partial<CreateAdminUserPayload>) => {
     setCreateForm((current) => ({ ...current, ...patch }));
   }, []);
   const changeUserDraft = useCallback((userId: number, patch: UpdateAdminUserPayload) => {
     setDrafts((current) => ({ ...current, [userId]: { ...current[userId], ...patch } }));
   }, []);
+
+  if (!tab) {
+    return <Navigate to="/admin/users" replace />;
+  }
+
+  const showRefresh = ADMIN_REFRESH_TABS.has(tab);
 
   return (
     <section className="admin-panel">
@@ -307,50 +210,64 @@ export function AdminPanel({
             onClick={onOpenSidebar}
             className="admin-panel__menu"
           />
-          <IconButton
-            label={t('refresh')}
-            icon={<RefreshCw size={16} />}
-            onClick={() => void loadAdminData()}
-            disabled={isLoading}
-          />
+          {showRefresh ? (
+            <IconButton
+              label={t('refresh')}
+              icon={<RefreshCw size={16} />}
+              onClick={() => {
+                if (tab === 'monitoring') {
+                  setMonitoringReloadKey((current) => current + 1);
+                  return;
+                }
+                void loadAdminData();
+              }}
+              disabled={isLoading}
+            />
+          ) : null}
         </div>
       </header>
 
       <div ref={tabsRef} className="admin-tabs">
-        <button
-          className={
-            tab === 'users' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
+        <NavLink
+          className={({ isActive }) =>
+            isActive ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
           }
-          onClick={() => setTab('users')}
+          to="/admin/users"
         >
           <UsersRound size={15} /> {t('adminUsers')}
-        </button>
-        <button
-          className={
-            tab === 'activity' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
+        </NavLink>
+        <NavLink
+          className={({ isActive }) =>
+            isActive ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
           }
-          onClick={() => setTab('activity')}
+          to="/admin/monitoring"
         >
-          <History size={15} /> {t('adminActivity')}
-        </button>
-        <button
-          className={
-            tab === 'stats' ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
+          <Radar size={15} /> {t('adminMonitoring')}
+        </NavLink>
+        <NavLink
+          className={({ isActive }) =>
+            isActive ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
           }
-          onClick={() => setTab('stats')}
+          to="/admin/stats"
         >
           <BarChart3 size={15} /> {t('adminStats')}
-        </button>
-        <button
-          className={
-            tab === 'integrations'
-              ? 'admin-tabs__item admin-tabs__item--active'
-              : 'admin-tabs__item'
+        </NavLink>
+        <NavLink
+          className={({ isActive }) =>
+            isActive ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
           }
-          onClick={() => setTab('integrations')}
+          to="/admin/integrations"
         >
           <Bot size={15} /> {t('adminIntegrations')}
-        </button>
+        </NavLink>
+        <NavLink
+          className={({ isActive }) =>
+            isActive ? 'admin-tabs__item admin-tabs__item--active' : 'admin-tabs__item'
+          }
+          to="/admin/subscriptions"
+        >
+          <CreditCard size={15} /> {t('adminSubscriptions')}
+        </NavLink>
       </div>
 
       {tab === 'users' ? (
@@ -380,11 +297,29 @@ export function AdminPanel({
                 currentUserId={currentUserId}
                 draft={drafts[user.id] ?? {}}
                 key={user.id}
-                roleOptions={roleOptions}
+                plans={plans}
                 t={t}
                 user={user}
                 onDelete={deleteUser}
                 onDraftChange={changeUserDraft}
+                onPlanAssigned={(userId, planId) => {
+                  setUsers((current) =>
+                    current.map((item) => {
+                      if (item.id !== userId) {
+                        return item;
+                      }
+                      const plan = plans.find((entry) => entry.id === planId);
+                      return {
+                        ...item,
+                        subscriptionPlanId: planId,
+                        subscriptionPlanName: plan?.name ?? item.subscriptionPlanName,
+                        subscriptionPlanIconKey: plan?.iconKey ?? item.subscriptionPlanIconKey,
+                      };
+                    }),
+                  );
+                  onSuccess(t('adminPlanAssigned'));
+                }}
+                onPlanError={() => onError(t('adminSaveError'))}
                 onSave={updateUser}
               />
             ))}
@@ -405,129 +340,8 @@ export function AdminPanel({
         onSubmit={createUser}
       />
 
-      {tab === 'activity' ? (
-        <div className="admin-activity-view">
-          <div className="admin-filter-bar admin-filter-bar--activity">
-            <label className="admin-search-field">
-              <Search size={15} />
-              <input
-                autoComplete="off"
-                value={activitySearch}
-                onChange={(event) => setActivitySearch(event.target.value)}
-                placeholder={t('search')}
-                aria-label={t('adminSearchActivity')}
-              />
-            </label>
-          </div>
-
-          <div className="activity-table-wrap">
-            <table className="activity-table">
-              <thead>
-                <tr>
-                  <th>
-                    <div className="activity-table__head-cell">
-                      <span>{t('adminActivityUser')}</span>
-                      <ActivityColumnFilter
-                        label={t('adminActivityUser')}
-                        emptyLabel={t('adminClearFilter')}
-                        options={activityFilterOptions.user}
-                        selected={activityFilters.user}
-                        onClear={() => clearActivityFilter('user')}
-                        onToggle={(value) => toggleActivityFilter('user', value)}
-                      />
-                    </div>
-                  </th>
-                  <th>
-                    <div className="activity-table__head-cell">
-                      <span>{t('adminActivityDate')}</span>
-                      <button
-                        className="activity-table__sort"
-                        type="button"
-                        aria-label={
-                          activitySort === 'newest' ? t('adminSortNewest') : t('adminSortOldest')
-                        }
-                        onClick={() =>
-                          setActivitySort((current) => (current === 'newest' ? 'oldest' : 'newest'))
-                        }
-                      >
-                        <span className="activity-table__sort-icon">
-                          <ArrowUpDown size={13} />
-                        </span>
-                      </button>
-                    </div>
-                  </th>
-                  <th>
-                    <div className="activity-table__head-cell">
-                      <span>{t('adminActivityAction')}</span>
-                      <ActivityColumnFilter
-                        label={t('adminActivityAction')}
-                        emptyLabel={t('adminClearFilter')}
-                        options={activityFilterOptions.action}
-                        selected={activityFilters.action}
-                        onClear={() => clearActivityFilter('action')}
-                        onToggle={(value) => toggleActivityFilter('action', value)}
-                      />
-                    </div>
-                  </th>
-                  <th>
-                    <div className="activity-table__head-cell">
-                      <span>{t('adminActivityActor')}</span>
-                      <ActivityColumnFilter
-                        label={t('adminActivityActor')}
-                        emptyLabel={t('adminClearFilter')}
-                        options={activityFilterOptions.actor}
-                        selected={activityFilters.actor}
-                        onClear={() => clearActivityFilter('actor')}
-                        onToggle={(value) => toggleActivityFilter('actor', value)}
-                      />
-                    </div>
-                  </th>
-                  <th>
-                    <div className="activity-table__head-cell">
-                      <span>{t('adminActivityTarget')}</span>
-                      <ActivityColumnFilter
-                        label={t('adminActivityTarget')}
-                        emptyLabel={t('adminClearFilter')}
-                        options={activityFilterOptions.target}
-                        selected={activityFilters.target}
-                        onClear={() => clearActivityFilter('target')}
-                        onToggle={(value) => toggleActivityFilter('target', value)}
-                      />
-                    </div>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {activityRows.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      <TooltipText
-                        value={item.userUsername ?? item.actorUsername ?? t('adminUnknownUser')}
-                      />
-                    </td>
-                    <td>
-                      <TooltipText value={new Date(item.createdAt).toLocaleString(dateLocale)} />
-                    </td>
-                    <td>
-                      <TooltipText value={getActivityActionLabel(item.action)} />
-                    </td>
-                    <td>
-                      <TooltipText value={item.actorUsername ?? '-'} />
-                    </td>
-                    <td>
-                      <TooltipText
-                        value={`${item.targetType}${item.targetId ? ` #${item.targetId}` : ''}`}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {activityRows.length === 0 ? (
-              <EmptyState tone="plain" title={t('adminNoActivity')} />
-            ) : null}
-          </div>
-        </div>
+      {tab === 'monitoring' ? (
+        <AdminMonitoringView language={language} reloadKey={monitoringReloadKey} t={t} />
       ) : null}
 
       {tab === 'stats' ? (
@@ -542,6 +356,15 @@ export function AdminPanel({
 
       {tab === 'integrations' ? (
         <AdminIntegrationsPanel t={t} onError={onError} onSuccess={onSuccess} />
+      ) : null}
+
+      {tab === 'subscriptions' ? (
+        <AdminSubscriptionsPanel
+          language={language}
+          t={t}
+          onError={onError}
+          onSuccess={onSuccess}
+        />
       ) : null}
     </section>
   );

@@ -1,12 +1,7 @@
-import { EditorContent } from '@tiptap/react';
 import { FileWarning, Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { publicApi } from '../../api';
-import { AmbientCubes } from '../../components/AmbientCubes';
-import { createCopyFieldLabels } from '../../editor/copyFieldLabels';
-import { EditorLinkTooltip } from '../../editor/EditorLinkTooltip';
-import { useNotebookEditor } from '../../editor/useNotebookEditor';
 import type { Translator } from '../../i18n';
 import type { PublicShare } from '../../types';
 import { sanitizeHtml } from '../../utils/html';
@@ -17,16 +12,10 @@ interface PublicSharePageProps {
 }
 
 export function PublicSharePage({ token, t }: PublicSharePageProps) {
-  const editorWrapRef = useRef<HTMLElement | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const [share, setShare] = useState<PublicShare | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isUnavailable, setIsUnavailable] = useState(false);
-  const copyFieldLabels = useMemo(() => createCopyFieldLabels(t), [t]);
-  const editor = useNotebookEditor({
-    onContentChange: () => undefined,
-    placeholder: '',
-    copyFieldLabels,
-  });
   const contentHtml = useMemo(
     () => sanitizeHtml(share?.note.contentHtml || '<p></p>'),
     [share?.note.contentHtml],
@@ -64,20 +53,27 @@ export function PublicSharePage({ token, t }: PublicSharePageProps) {
   }, [token]);
 
   useEffect(() => {
-    if (!editor || !share) {
+    const root = contentRef.current;
+    if (!root) {
       return;
     }
 
-    editor.commands.setContent(contentHtml);
-    editor.setEditable(false);
-  }, [contentHtml, editor, share]);
+    root.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((anchor) => {
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+    });
+  }, [contentHtml]);
 
   return (
-    <main className="public-share-page">
-      <AmbientCubes area="workspace" />
+    <main className="public-share-page" id="app-main">
+      <a className="skip-link" href="#app-main">
+        {t('skipToContent')}
+      </a>
+
       {isLoading ? (
-        <section className="public-share-state" aria-busy="true">
-          <Loader2 className="boot-spinner" size={28} />
+        <section className="public-share-state" aria-busy="true" aria-live="polite">
+          <span className="sr-only">{t('loading')}</span>
+          <Loader2 className="boot-spinner" size={28} aria-hidden />
         </section>
       ) : null}
 
@@ -100,13 +96,13 @@ export function PublicSharePage({ token, t }: PublicSharePageProps) {
               {t('shareExpiresAt')} {new Date(share.expiresAt).toLocaleString()}
             </span>
           </header>
-          <section
-            className="editor-wrap editor-wrap--preview public-share-content"
-            ref={editorWrapRef}
-          >
-            <EditorContent editor={editor} />
+          <section className="editor-wrap editor-wrap--preview public-share-content">
+            <div
+              ref={contentRef}
+              className="editor-surface ProseMirror public-share-content__body"
+              dangerouslySetInnerHTML={{ __html: contentHtml }}
+            />
           </section>
-          <EditorLinkTooltip containerRef={editorWrapRef} isEditing={false} />
         </article>
       ) : null}
     </main>

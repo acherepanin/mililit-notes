@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common'
 import { createHash } from 'node:crypto';
 
 import { DatabaseService } from '../infra/database.service';
+import { redactSecretText } from '../common/secret-redaction.util';
 import { NotesService } from '../notes/notes.service';
 import type { NoteSearchResult } from '../notes/notes.types';
 import { AiCryptoService } from './ai-crypto.service';
@@ -191,7 +192,7 @@ export class AiEmbeddingsService {
 
     return rows.map((row) => ({
       ...row,
-      contentText: allowReadSecrets ? row.contentText : this.redactSecretText(row.contentText),
+      contentText: allowReadSecrets ? row.contentText : redactSecretText(row.contentText),
     }));
   }
 
@@ -424,12 +425,5 @@ export class AiEmbeddingsService {
 
   private estimateTokens(value: string): number {
     return Math.ceil(value.length / 4);
-  }
-
-  private redactSecretText(value: string): string {
-    return value.replace(
-      /\b(password|пароль|token|токен|api[-_\s]?key|secret|секрет)\b\s*[:=-]\s*[^\n,;]+/gi,
-      (match, label: string) => `${label}: [secret hidden]`,
-    );
   }
 }

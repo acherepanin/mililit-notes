@@ -1,0 +1,157 @@
+:root,
+:root[data-theme='dark'] {
+  --plan-card-surface: var(--panel-2);
+  --plan-card-sticker-base: var(--panel);
+  --plan-card-bg-mix: 18%;
+  --plan-card-accent-base: var(--text);
+  --plan-card-accent-mix: 76%;
+  --plan-card-shape-mix: 40%;
+  --plan-card-sticker-mix: 14%;
+  --plan-card-border-mix: 34%;
+  --plan-card-highlight: color-mix(in srgb, var(--text) 10%, transparent);
+  --plan-palette-sky: #62a8ff;
+  --plan-palette-mint: #45d4c4;
+  --plan-palette-sun: #ffb45f;
+  --plan-palette-rose: #ff7484;
+  --plan-palette-lilac: #b898ff;
+  --plan-palette-coral: #ff9668;
+  --plan-palette-slate: #8fa3bc;
+}
+
+:root[data-theme='light'] {
+  --plan-card-surface: var(--panel);
+  --plan-card-sticker-base: #ffffff;
+  --plan-card-bg-mix: 11%;
+  --plan-card-accent-base: #122038;
+  --plan-card-accent-mix: 66%;
+  --plan-card-shape-mix: 22%;
+  --plan-card-sticker-mix: 7%;
+  --plan-card-border-mix: 28%;
+  --plan-card-highlight: color-mix(in srgb, #ffffff 72%, transparent);
+  --plan-palette-sky: #2f86e3;
+  --plan-palette-mint: #1fa884;
+  --plan-palette-sun: #c87810;
+  --plan-palette-rose: #d44e7a;
+  --plan-palette-lilac: #7b54d9;
+  --plan-palette-coral: #d65a3a;
+  --plan-palette-slate: #4a607a;
+}
+
+:root[data-theme='aurora'] {
+  --plan-card-surface: var(--panel-2);
+  --plan-card-sticker-base: var(--panel);
+  --plan-card-bg-mix: 17%;
+  --plan-card-accent-base: var(--text);
+  --plan-card-accent-mix: 74%;
+  --plan-card-shape-mix: 38%;
+  --plan-card-sticker-mix: 13%;
+  --plan-card-border-mix: 32%;
+  --plan-card-highlight: color-mix(in srgb, var(--text) 9%, transparent);
+  --plan-palette-sky: #86b8d4;
+  --plan-palette-mint: #78c8be;
+  --plan-palette-sun: #d8b878;
+  --plan-palette-rose: #e88a96;
+  --plan-palette-lilac: #9ec8d8;
+  --plan-palette-coral: #d8a878;
+  --plan-palette-slate: #8aa4aa;
+}
+
+:root[data-theme='ember'] {
+  --plan-card-surface: var(--panel-2);
+  --plan-card-sticker-base: var(--panel);
+  --plan-card-bg-mix: 17%;
+  --plan-card-accent-base: var(--text);
+  --plan-card-accent-mix: 72%;
+  --plan-card-shape-mix: 36%;
+  --plan-card-sticker-mix: 13%;
+  --plan-card-border-mix: 30%;
+  --plan-card-highlight: color-mix(in srgb, var(--text) 8%, transparent);
+  --plan-palette-sky: #a89878;
+  --plan-palette-mint: #78b894;
+  --plan-palette-sun: #d4a868;
+  --plan-palette-rose: #e08080;
+  --plan-palette-lilac: #c4b090;
+  --plan-palette-coral: #d4a878;
+  --plan-palette-slate: #a89888;
+}
+
+:root[data-theme='ocean'] {
+  --plan-card-surface: var(--panel-2);
+  --plan-card-sticker-base: var(--panel);
+  --plan-card-bg-mix: 17%;
+  --plan-card-accent-base: var(--text);
+  --plan-card-accent-mix: 74%;
+  --plan-card-shape-mix: 38%;
+  --plan-card-sticker-mix: 13%;
+  --plan-card-border-mix: 32%;
+  --plan-card-highlight: color-mix(in srgb, var(--text) 9%, transparent);
+  --plan-palette-sky: #74c0dc;
+  --plan-palette-mint: #6cc0a4;
+  --plan-palette-sun: #d4b070;
+  --plan-palette-rose: #e08898;
+  --plan-palette-lilac: #c0a8b0;
+  --plan-palette-coral: #d4a878;
+  --plan-palette-slate: #8a9cb4;
+}
+
+.plan-card-theme--sky {
+  --plan-palette: var(--plan-palette-sky);
+}
+
+.plan-card-theme--mint {
+  --plan-palette: var(--plan-palette-mint);
+}
+
+.plan-card-theme--sun {
+  --plan-palette: var(--plan-palette-sun);
+}
+
+.plan-card-theme--rose {
+  --plan-palette: var(--plan-palette-rose);
+}
+
+.plan-card-theme--lilac {
+  --plan-palette: var(--plan-palette-lilac);
+}
+
+.plan-card-theme--coral {
+  --plan-palette: var(--plan-palette-coral);
+}
+
+.plan-card-theme--slate {
+  --plan-palette: var(--plan-palette-slate);
+}
+
+.plan-card-theme {
+  --plan-card-bg: transparent;
+  --plan-card-accent: color-mix(
+    in srgb,
+    var(--plan-palette) var(--plan-card-accent-mix),
+    var(--plan-card-accent-base)
+  );
+  --plan-card-shape: color-mix(in srgb, var(--plan-palette) var(--plan-card-shape-mix), transparent);
+  --plan-card-sticker: color-mix(
+    in srgb,
+    var(--plan-palette) var(--plan-card-sticker-mix),
+    var(--plan-card-sticker-base)
+  );
+}
+
+.plan-card-decor {
+  color: var(--plan-card-shape);
+}
+
+.plan-card-theme .plan-card-sticker {
+  background: var(--plan-card-sticker);
+  color: var(--plan-card-accent);
+}
+
+.plan-card-picker__color.plan-card-theme {
+  background: color-mix(in srgb, var(--plan-palette) 24%, transparent);
+  border-color: var(--plan-card-accent);
+}
+
+.plan-card-picker__art-preview.plan-card-theme {
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--plan-card-accent) 24%, var(--line));
+}

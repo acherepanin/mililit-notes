@@ -35,8 +35,16 @@
 | `UPLOAD_DIR`                    | `uploads`             | Каталог файлов вложений                                                                              |
 | `MAX_UPLOAD_SIZE_MB`            | `25`                  | Максимальный размер одного вложения                                                                  |
 | `ALLOWED_UPLOAD_EXTENSIONS`     | список расширений     | Разрешенные типы файлов для вложений                                                                 |
+| `ALLOW_MOCK_CHECKOUT`           | не задано             | В production mock-оплата подписок доступна только при `true`                                         |
+| `APP_PUBLIC_URL`                | `http://localhost:3000` | Базовый URL SPA для ссылок подтверждения email                                                     |
+| `SMTP_HOST`                     | не задано             | SMTP-сервер; без него ссылка подтверждения пишется в лог                                           |
+| `SMTP_PORT`                     | `587`                 | Порт SMTP                                                                                            |
+| `SMTP_SECURE`                   | `false`               | `true` для SMTPS (465)                                                                               |
+| `SMTP_USER`                     | не задано             | Логин SMTP                                                                                           |
+| `SMTP_PASS`                     | не задано             | Пароль SMTP                                                                                          |
+| `SMTP_FROM`                     | `notes@localhost`     | Адрес отправителя писем                                                                              |
 
-Для production задайте сильный `AUTH_SECRET`, `SECRET_ENCRYPTION_KEY`, `AI_CREDENTIALS_ENCRYPTION_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` до первого запуска с пустой БД.
+Для production задайте сильный `AUTH_SECRET`, `SECRET_ENCRYPTION_KEY`, `AI_CREDENTIALS_ENCRYPTION_KEY`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` до первого запуска с пустой БД. Backend не стартует в `NODE_ENV=production`, если `AUTH_SECRET` не задан или совпадает с dev-значением по умолчанию. Для Telegram/VK webhook secret обязателен при включённом боте.
 
 ## Локальный Dev-Запуск
 

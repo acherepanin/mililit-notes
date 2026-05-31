@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Inject, Injectable } from '@ne
 
 import { ActivityService } from '../activity/activity.service';
 import { AdminService } from '../admin/admin.service';
+import { redactSecretHtml, redactSecretText } from '../common/secret-redaction.util';
 import type { UserRole } from '../auth/auth.types';
 import { DatabaseService } from '../infra/database.service';
 import { NotesService } from '../notes/notes.service';
@@ -872,36 +873,22 @@ export class AiToolsService {
     }
 
     if (!result || typeof result !== 'object') {
-      return typeof result === 'string' ? this.redactSecretText(result) : result;
+      return typeof result === 'string' ? redactSecretText(result) : result;
     }
 
     const source = result as Record<string, unknown>;
     return Object.fromEntries(
       Object.entries(source).map(([key, value]) => {
         if (key === 'contentHtml' && typeof value === 'string') {
-          return [key, this.redactSecretHtml(value)];
+          return [key, redactSecretHtml(value)];
         }
 
         if ((key === 'contentText' || key === 'snippet') && typeof value === 'string') {
-          return [key, this.redactSecretText(value)];
+          return [key, redactSecretText(value)];
         }
 
         return [key, value];
       }),
-    );
-  }
-
-  private redactSecretHtml(value: string): string {
-    return value.replace(
-      /(<[^>]*data-copy-field[^>]*(?:data-secret="true"|data-kind="(?:password|token|credential)")|<[^>]*(?:data-secret="true"|data-kind="(?:password|token|credential)")[^>]*data-copy-field[^>]*)([^>]*data-value=")[^"]*("[^>]*>)/gi,
-      '$1$2[secret hidden]$3',
-    );
-  }
-
-  private redactSecretText(value: string): string {
-    return value.replace(
-      /\b(password|пароль|token|токен|api[-_\s]?key|secret|секрет)\b\s*[:=-]\s*[^\n,;]+/gi,
-      (match, label: string) => `${label}: [secret hidden]`,
     );
   }
 

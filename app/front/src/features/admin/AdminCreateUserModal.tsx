@@ -1,8 +1,10 @@
-import { KeyRound, Shield, UserPlus, UsersRound } from 'lucide-react';
+import { Mail, ShieldCheck, UserPlus, UserRound } from 'lucide-react';
 
 import { CustomSelect, type SelectOption } from '../../components/CustomSelect';
 import { IconButton } from '../../components/IconButton';
+import { IntegrationField } from '../../components/IntegrationField';
 import { Modal } from '../../components/Modal';
+import { PasswordField } from '../../components/PasswordField';
 import type { Translator } from '../../i18n';
 import type { CreateAdminUserPayload, UserRole } from '../../types';
 
@@ -34,38 +36,53 @@ export function AdminCreateUserModal({
           onSubmit();
         }}
       >
-        <label className="field-shell">
-          <UsersRound size={15} />
-          <input
-            name="username"
-            value={form.username}
-            onChange={(event) => onFormChange({ username: event.target.value })}
-            placeholder={t('username')}
-            aria-label={t('username')}
-            autoComplete="username"
-          />
-        </label>
-        <label className="field-shell">
-          <KeyRound size={15} />
-          <input
-            autoComplete="new-password"
-            name="password"
+        <div className="admin-create-modal__fields admin-integration-fields">
+          <IntegrationField icon={<UserRound size={14} />} label={t('username')} wide>
+            <input
+              name="username"
+              value={form.username}
+              onChange={(event) => onFormChange({ username: event.target.value })}
+              placeholder={t('username')}
+              aria-label={t('username')}
+              autoComplete="username"
+              required
+            />
+          </IntegrationField>
+          <IntegrationField icon={<Mail size={14} />} label={t('email')} wide>
+            <input
+              type="email"
+              name="email"
+              value={form.email}
+              onChange={(event) => onFormChange({ email: event.target.value })}
+              placeholder={t('email')}
+              aria-label={t('email')}
+              autoComplete="email"
+              required
+            />
+          </IntegrationField>
+          <PasswordField
+            label={t('password')}
+            showPasswordLabel={t('showPassword')}
+            hidePasswordLabel={t('hidePassword')}
+            generateLabel={t('generatePassword')}
             value={form.password}
-            onChange={(event) => onFormChange({ password: event.target.value })}
+            onValueChange={(password) => onFormChange({ password })}
+            name="password"
             placeholder={t('password')}
-            type="password"
-            aria-label={t('password')}
+            autoComplete="new-password"
+            required
+            wide
           />
-        </label>
-        <label className="admin-create-modal__role">
-          <Shield size={15} />
-          <CustomSelect
-            label={t('role')}
-            value={form.role ?? 'user'}
-            options={roleOptions}
-            onChange={(nextRole) => onFormChange({ role: nextRole })}
-          />
-        </label>
+          <IntegrationField icon={<ShieldCheck size={14} />} label={t('role')} wide>
+            <CustomSelect
+              className="admin-create-modal__role-select"
+              label={t('role')}
+              value={form.role ?? 'user'}
+              options={roleOptions}
+              onChange={(nextRole) => onFormChange({ role: nextRole })}
+            />
+          </IntegrationField>
+        </div>
         <div className="modal-actions">
           <IconButton
             label={t('adminCreateUser')}

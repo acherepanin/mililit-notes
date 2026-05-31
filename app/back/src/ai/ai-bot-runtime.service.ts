@@ -847,7 +847,10 @@ export class AiBotRuntimeService {
   ): void {
     const expectedSecret = this.aiCryptoService.decrypt(settings.secret_encrypted);
 
-    if (expectedSecret && expectedSecret !== secretToken) {
+    if (!expectedSecret) {
+      throw new BadRequestException('Telegram webhook secret is not configured');
+    }
+    if (expectedSecret !== secretToken) {
       throw new BadRequestException('Invalid Telegram webhook secret');
     }
   }
@@ -855,7 +858,10 @@ export class AiBotRuntimeService {
   private verifyVkWebhook(settings: AiBotAdminSettingsRow, payload: VkWebhookPayload): void {
     const expectedSecret = this.aiCryptoService.decrypt(settings.secret_encrypted);
 
-    if (expectedSecret && payload.secret !== expectedSecret) {
+    if (!expectedSecret) {
+      throw new BadRequestException('VK webhook secret is not configured');
+    }
+    if (payload.secret !== expectedSecret) {
       throw new BadRequestException('Invalid VK webhook secret');
     }
 

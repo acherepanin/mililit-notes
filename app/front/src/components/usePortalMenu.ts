@@ -55,23 +55,36 @@ export function usePortalMenu(
     }
 
     const rect = anchor.getBoundingClientRect();
-    const freeBelow = window.innerHeight - rect.bottom;
-    const freeAbove = rect.top;
+    const freeBelow = window.innerHeight - rect.bottom - gap;
+    const freeAbove = rect.top - gap;
+    const width = matchAnchorWidth
+      ? Math.max(rect.width, minWidth || rect.width)
+      : Math.max(minWidth, rect.width);
     const nextDirection =
-      freeBelow >= flipThreshold || freeBelow >= freeAbove ? 'down' : 'up';
+      freeBelow >= flipThreshold && freeBelow >= freeAbove
+        ? 'down'
+        : freeAbove >= freeBelow
+          ? 'up'
+          : 'down';
+    const availableSpace = nextDirection === 'down' ? freeBelow : freeAbove;
     const maxHeight = Math.max(
       minHeight,
-      Math.min(maxHeightCap, (nextDirection === 'down' ? freeBelow : freeAbove) - 12),
+      Math.min(maxHeightCap, availableSpace - 8),
     );
-    const width = matchAnchorWidth ? Math.max(rect.width, minWidth) : minWidth;
+
+    let left = rect.left;
+    if (left + width > window.innerWidth - 8) {
+      left = Math.max(8, rect.right - width);
+    }
+    left = Math.min(Math.max(8, left), Math.min(anchorMaxLeft, Math.max(8, window.innerWidth - width - 8)));
 
     setDirection((current) => (current === nextDirection ? current : nextDirection));
     setMenuStyle((current) => {
       const nextStyle: CSSProperties = {
-        left: Math.min(rect.left, anchorMaxLeft),
+        left,
         top: nextDirection === 'down' ? rect.bottom + gap : undefined,
         bottom: nextDirection === 'up' ? window.innerHeight - rect.top + gap : undefined,
-        width: width || undefined,
+        width,
         maxHeight,
       };
 
