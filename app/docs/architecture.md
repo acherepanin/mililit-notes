@@ -4,7 +4,7 @@
 
 Приложение разделено на два TypeScript-проекта:
 
-- `app/back` - NestJS backend, SQLite, REST API, auth, роли, админские операции, отдача frontend-статики.
+- `app/back` - NestJS backend, PostgreSQL через TypeORM, REST API, auth, роли, админские операции, отдача frontend-статики.
 - `app/front` - React + Vite SPA, React Router, Tiptap editor, дерево заметок, админ-панель, личный кабинет, подписки, темы и локализация.
 
 Production-поток:
@@ -18,7 +18,7 @@ Production-поток:
 ### Модули
 
 - `AppModule` - подключает `ConfigModule`, `ServeStaticModule`, `AuthModule`, `SubscriptionsModule`, `AdminModule`, `MonitoringModule`, `AiModule`, `DatabaseModule`, `NotesModule`, `HealthController`.
-- `DatabaseModule` - singleton `DatabaseService` and shared `AttachmentFilesService`.
+- `DatabaseModule` - регистрирует TypeORM-сущности (`TypeOrmModule.forFeature`), общий `AttachmentFilesService` и `DatabaseSeederService` (схема через `synchronize`, seed-admin и welcome note).
 - `AuthModule` - login, register, token verification, профиль, пароль, текущий пользователь, preferences; глобальный `AuthGuard` через `APP_GUARD`, публичные routes помечаются `@Public()`.
 - `SubscriptionsModule` - тарифы, активные подписки, mock checkout, `EntitlementsService` (AI, файлы, лимит хранилища; admin bypass).
 - `NotesModule` - CRUD и move заметок текущего пользователя.
@@ -31,12 +31,14 @@ Production-поток:
 
 ### Конфигурация
 
-`ConfigModule.forRoot({ isGlobal: true })` читает `.env`.
+`ConfigModule.forRoot({ isGlobal: true })` читает слоистые env-файлы: всегда `.env`, плюс `.env.<APP_ENV>` (`.env.dev` / `.env.prod`) поверх него. Порядок и выбор слоя — в `src/config/env-files.ts`. `TypeOrmModule.forRootAsync` строит подключение через `src/database/typeorm.config.ts`.
 
 Ключевые env:
 
+- `APP_ENV` (выбор слоя `.env.dev`/`.env.prod`)
 - `PORT`
-- `DB_PATH`
+- `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- `DB_SYNCHRONIZE`, `DB_LOGGING`
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
 - `AUTH_SECRET`
@@ -87,20 +89,17 @@ base64urlPayload.signature
 `AuthGuard` проверяет Bearer token и кладет `request.user`.
 `AdminGuard` проверяет `request.user.role === 'admin'`.
 
-### SQLite
+### Persistence (PostgreSQL + TypeORM)
 
-`DatabaseService`:
+- подключение настраивается в `src/database/typeorm.config.ts` из env (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`);
+- сущности объявлены в `src/database/entities/*` и регистрируются через `TypeOrmModule.forFeature`;
+- при `DB_SYNCHRONIZE=true` TypeORM создаёт/обновляет схему из сущностей при старте (без отдельных миграций);
+- сервисы используют инъекцию `Repository<Entity>` и `DataSource`; сложные агрегаты и upsert'ы реализуются через `createQueryBuilder` и параметризованные `dataSource.query`;
+- `DatabaseSeederService` создаёт seed-admin, если таблица `users` пустая, и welcome note, если таблица `notes` пустая.
 
-- создает директорию для `DB_PATH`;
-- открывает `better-sqlite3`;
-- включает `journal_mode = WAL`;
-- включает `foreign_keys = ON`;
-- выполняет idempotent schema migration;
-- удаляет устаревшие колонки снятых функций при старте, если текущая SQLite поддерживает `ALTER TABLE ... DROP COLUMN`;
-- создает seed-admin, если таблица `users` пустая;
-- создает welcome note, если таблица `notes` пустая.
+## Схема Данных
 
-## SQLite Схема
+Описание ниже — концептуальное; фактические типы колонок задаются TypeORM-сущностями (`src/database/entities`) и материализуются в PostgreSQL.
 
 ### `users`
 
@@ -149,7 +148,7 @@ base64urlPayload.signature
 - `attachments` - метаданные файлов аккаунта: `note_id` может быть `NULL`, `user_id` всегда владелец файла, имя, MIME type, размер и `storage_path`; сами файлы лежат в `UPLOAD_DIR`. Связь с заметкой опциональная и использует `ON DELETE SET NULL`, поэтому окончательное удаление заметки отвязывает файлы, но не удаляет их. Физическая очистка файлов централизована в `AttachmentFilesService`; недоступные файлы логируются warning-сообщением и не ломают удаление записи из БД.
 - `share_links` - временные публичные ссылки с hash токена, публичным URL для повторного копирования активной ссылки, флагом показа секретов и optional one-time лимитом открытий через `max_access_count`/`access_count`.
 - `share_link_access_logs` - история открытий публичных ссылок.
-- `note_fts` - SQLite FTS5 virtual table для полнотекстового поиска.
+- полнотекстовый поиск по заметкам выполняется средствами PostgreSQL поверх таблицы `notes`.
 - `ai_user_settings` - активное состояние Notes AI пользователя: enable flag, доступ к секретам, дневные лимиты запросов/токенов и текущая пара provider/base URL.
 - `ai_provider_settings` - per-provider настройки пользователя: model, зашифрованный API key, безопасная маска ключа и состояние проверок/синхронизации для каждой пары `provider_name` + `base_url`.
 - `ai_provider_models` - модели, доступные конкретному пользователю и provider/key после синхронизации; старые модели помечаются `is_deprecated`, `provider_created_at` хранит `created` из provider, если оно пришло. Для известных OpenAI-моделей сохраняются `input_price_per_1m`, `cached_input_price_per_1m`, `output_price_per_1m`; неизвестные цены остаются `NULL`.
@@ -238,10 +237,10 @@ base64urlPayload.signature
 - шаблоны заметок;
 - экспорт JSON в файл с зашифрованными `data-value` для secret/password/token полей данных;
 - импорт JSON из файла с восстановлением тегов, избранного, закрепления и parent-связей;
-- вложения и файловое хранилище: глобальный список файлов аккаунта, загрузка, привязка/отвязка к заметкам, список файлов заметки, переименование, скачивание, удаление и ZIP-архив без хранения бинарного содержимого в SQLite;
+- вложения и файловое хранилище: глобальный список файлов аккаунта, загрузка, привязка/отвязка к заметкам, список файлов заметки, переименование, скачивание, удаление и ZIP-архив (бинарное содержимое хранится на диске, в БД только метаданные);
 - временные публичные ссылки.
 
-Экспорт JSON загружает теги заметок batch-запросом по всем note ids, без N+1 запросов на каждую заметку. Импорт JSON выполняется в SQLite-транзакции: если одна из заметок, связей или шаблонов не проходит валидацию/запись, частично импортированное состояние не остается.
+Экспорт JSON загружает теги заметок batch-запросом по всем note ids, без N+1 запросов на каждую заметку. Импорт JSON выполняется в транзакции (`DataSource.transaction`): если одна из заметок, связей или шаблонов не проходит валидацию/запись, частично импортированное состояние не остается.
 
 ### `SecretFieldCryptoService`
 
@@ -304,7 +303,7 @@ Admin endpoints: `/api/admin/monitoring/actions`, `/subscriptions`, `/errors`, `
 - `chat(userId, dto, options)`;
 - `executeAction(userId, dto)`.
 
-Сервис работает через `DatabaseService`, `AiCryptoService`, `AiModelCatalogService`, `AiToolsService` и `ActivityService`.
+Сервис работает через TypeORM-репозитории/`DataSource`, `AiCryptoService`, `AiModelCatalogService`, `AiToolsService` и `ActivityService`.
 Вызовы моделей идут через OpenAI-compatible HTTP API:
 
 - `GET <baseUrl>/models` для синхронизации;
@@ -497,8 +496,11 @@ Fallback для lazy-загрузки использует существующ�
 - Токены цветов, размеров, радиусов, motion и z-index централизованы в `styles.css`.
 - Базовая типографика вынесена в `--font-sans`; интерфейс использует стек `Aptos` / `Segoe UI Variable` / `Segoe UI` без внешней загрузки шрифтов.
 - Основной фон светлой темы задан спокойным холодным почти-белым токеном `--bg`, чтобы панели и декоративные элементы не спорили с рабочей областью.
-- Основной фон темной темы задан глубоким индиго-графитовым токеном `--bg`, без цветных фоновых слоев.
-- Основной рабочий блок и sidebar используют отдельный `--layout-shadow`: плотную тонкую тень справа и снизу, подобранную близко к фону темы; остальные элементы остаются без теней.
+- Темная тема — тёмные тона с лёгким зелёным подтоном (`--bg: #14160f`) и зелёным акцентом (`--accent: #6cc296`, поддержка — тёплый `--accent-2`); без оттенков синего и фиолетового. Фонового градиента нет (`--bg-gradient: none`).
+- Едва заметный рельеф фона задаётся inline-SVG паттерном `--bg-relief` (мягкие embossed-волны: светлая + тёмная линия), рисуется на `body::before` (fixed, `z-index: -1`, repeat 150px, `pointer-events: none`). Виден слабо и просвечивает сквозь стеклянные блоки.
+- Панели стеклянные: токены `--panel`/`--panel-2`/`--panel-3` имеют низкую alpha (в тёмной теме ~50/44/40%, с зелёным подтоном), `--surface: var(--panel)`.
+- Основной блок (workspace) и меню (sidebar) почти прозрачные: используют отдельный токен `--shell-glass` (~30% alpha) через `background: var(--shell-glass, var(--surface))`; для остальных тем токен не задан и подхватывается fallback `--surface`. Размытие `backdrop-filter: blur(12px)` умеренное, плюс тонкий световой кант через `::before`.
+- Основной рабочий блок и sidebar используют `--layout-shadow` (мягкая тень со световым inset-кантом); остальные элементы остаются без тяжёлых теней.
 - Light theme отдельно усиливает `--cube-line`, `--cube-fill`, `--cube-spark` и opacity/stroke декоративных SVG-кубов, чтобы они не терялись на светлом фоне.
 - Native `alert`, `prompt`, `confirm` не используются.
 - Dropdown, tooltip, modal и toast кастомные.
@@ -509,9 +511,8 @@ Fallback для lazy-загрузки использует существующ�
 
 Не являются исходниками:
 
-- `*.sqlite`
-- `*.sqlite-wal`
-- `*.sqlite-shm`
+- данные PostgreSQL (Docker volume `notes-db`)
+- загруженные файлы вложений (`UPLOAD_DIR` / volume `notes-uploads`)
 - `*.tsbuildinfo`
 - `test-results`
 - `dist`

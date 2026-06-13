@@ -3,7 +3,6 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react
 import {
   BrowserRouter,
   Navigate,
-  Outlet,
   Route,
   Routes,
   useLocation,
@@ -11,7 +10,6 @@ import {
   useParams,
 } from 'react-router-dom';
 
-import { ApiError } from './api';
 import { ToastHost } from './components/ToastHost';
 import { useToasts } from './components/useToasts';
 import { AdminApp } from './features/admin/AdminApp';
@@ -25,9 +23,10 @@ import { PublicSharePage } from './features/share/PublicSharePage';
 import { RequireAdmin } from './routes/RequireAdmin';
 import { RequireAuth } from './routes/RequireAuth';
 import { createTranslator } from './i18n';
-import { parseUserTheme } from './themes';
+import { applyTheme, parseUserTheme } from './themes';
 import type { RegistrationPendingResponse } from './types';
 import type { UserLanguage, UserTheme } from './types';
+import { resolveApiError } from './utils/apiErrors';
 import { resolveLoginErrorMessage } from './utils/authErrors';
 
 const AuthenticatedApp = lazy(() => import('./features/app/AuthenticatedApp'));
@@ -53,7 +52,7 @@ function PublicShareRoute() {
 
   useEffect(() => {
     document.documentElement.lang = language;
-    document.documentElement.dataset.theme = theme;
+    applyTheme(theme);
   }, [language, theme]);
 
   return <PublicSharePage token={token} t={t} />;
@@ -75,7 +74,7 @@ function LoginRoute() {
   const t = useMemo(() => createTranslator(language), [language]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    applyTheme(theme);
     document.documentElement.lang = language;
     localStorage.setItem(guestLanguageKey, language);
     localStorage.setItem(guestThemeKey, theme);
@@ -142,7 +141,7 @@ function RegisterRoute() {
   const t = useMemo(() => createTranslator(language), [language]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = guestTheme;
+    applyTheme(guestTheme);
     document.documentElement.lang = language;
     localStorage.setItem(guestLanguageKey, language);
     localStorage.setItem(guestThemeKey, guestTheme);
@@ -162,11 +161,7 @@ function RegisterRoute() {
         setPendingRegistration(pending);
         return pending;
       } catch (error) {
-        if (error instanceof ApiError && error.status === 409) {
-          toasts.pushToast('error', error.message);
-        } else {
-          toasts.pushToast('error', t('registerError'));
-        }
+        toasts.pushToast('error', resolveApiError(error, t, 'registerError'));
         throw error;
       } finally {
         setIsSubmitting(false);
@@ -238,7 +233,7 @@ function AuthenticatedLayout() {
   const t = useMemo(() => createTranslator(language), [language]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    applyTheme(theme);
     document.documentElement.lang = language;
   }, [language, theme]);
 

@@ -1,58 +1,66 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
-import { DatabaseService } from '../infra/database.service';
+import { ActivityLogEntity } from '../database/entities/activity.entity';
+import { UserEntity } from '../database/entities/user.entity';
 import { isRecord } from '../utils/type-guards';
 import type { ActivityRecord, ActivityResponse, RecordActivityParams } from './activity.types';
 
 @Injectable()
 export class ActivityService {
-  constructor(@Inject(DatabaseService) private readonly databaseService: DatabaseService) {}
+  constructor(
+    @InjectRepository(ActivityLogEntity)
+    private readonly activityRepo: Repository<ActivityLogEntity>,
+  ) {}
 
-  record({
+  async record({
     actorId,
     userId,
     action,
     targetType,
     targetId,
     details = {},
-  }: RecordActivityParams): void {
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO activity_logs (actor_id, user_id, action, target_type, target_id, details, created_at)
-          VALUES (@actorId, @userId, @action, @targetType, @targetId, @details, @createdAt)
-        `,
-      )
-      .run({
-        actorId,
-        userId,
-        action,
-        targetType,
-        targetId,
-        details: JSON.stringify(details),
-        createdAt: new Date().toISOString(),
-      });
+  }: RecordActivityParams): Promise<void> {
+    await this.activityRepo.insert({
+      actor_id: actorId,
+      user_id: userId,
+      action,
+      target_type: targetType,
+      target_id: targetId,
+      details: JSON.stringify(details),
+      created_at: new Date().toISOString(),
+    });
   }
 
-  list(limit = 100, options?: { excludeSubscription?: boolean }): ActivityResponse[] {
+  async list(limit = 100, options?: { excludeSubscription?: boolean }): Promise<ActivityResponse[]> {
     const normalizedLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 200) : 100;
     const excludeSubscription = options?.excludeSubscription ?? false;
-    const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT
-            activity_logs.*,
-            actor.username as actor_username,
-            target_user.username as user_username
-          FROM activity_logs
-          LEFT JOIN users actor ON actor.id = activity_logs.actor_id
-          LEFT JOIN users target_user ON target_user.id = activity_logs.user_id
-          ${excludeSubscription ? "WHERE activity_logs.action NOT LIKE 'subscription.%'" : ''}
-          ORDER BY activity_logs.created_at DESC, activity_logs.id DESC
-          LIMIT @limit
-        `,
-      )
-      .all({ limit: normalizedLimit }) as ActivityRecord[];
+
+    const qb = this.activityRepo
+      .createQueryBuilder('a')
+      .leftJoin(UserEntity, 'actor', 'actor.id = a.actor_id')
+      .leftJoin(UserEntity, 'target_user', 'target_user.id = a.user_id')
+      .select('a.id', 'id')
+      .addSelect('a.actor_id', 'actor_id')
+      .addSelect('a.user_id', 'user_id')
+      .addSelect('a.action', 'action')
+      .addSelect('a.target_type', 'target_type')
+      .addSelect('a.target_id', 'target_id')
+      .addSelect('a.details', 'details')
+      .addSelect('a.created_at', 'created_at')
+      .addSelect('actor.username', 'actor_username')
+      .addSelect('target_user.username', 'user_username');
+
+    if (excludeSubscription) {
+      qb.where("a.action NOT LIKE 'subscription.%'");
+    }
+
+    const rows = (await qb
+      .orderBy('a.created_at', 'DESC')
+      .addOrderBy('a.id', 'DESC')
+      .limit(normalizedLimit)
+      .getRawMany()) as ActivityRecord[];
 
     return rows.map((row) => this.mapActivity(row));
   }

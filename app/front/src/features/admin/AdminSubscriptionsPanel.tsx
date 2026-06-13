@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 
 import { adminApi, aiApi, ApiError } from '../../api';
 import { CustomSelect } from '../../components/CustomSelect';
-import { useConfirmDelete } from '../../components/DeleteConfirmationProvider';
+import { useConfirmDelete } from '../../components/deleteConfirmation';
 import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import { IntegrationField } from '../../components/IntegrationField';

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { CircleHelp } from 'lucide-react';
 
 import type { Translator } from '../i18n';
-import type { BillingPeriod, SubscriptionPlan, UserLanguage } from '../types';
+import type { SubscriptionPlan, UserLanguage } from '../types';
 import { buildPlanFeatureItems } from '../utils/planFeatureLines';
 import { PlanFeatureIndicator } from './PlanFeatureIndicator';
 import { PlanCardShell, PlanCardSticker } from './PlanCardVisual';

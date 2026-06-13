@@ -1,20 +1,15 @@
-import {
-  Inject,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
 import { readPositiveInteger } from '../config/env';
-import { DatabaseService } from '../infra/database.service';
+import { UserEntity } from '../database/entities/user.entity';
 import { EntitlementsService } from '../subscriptions/entitlements.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 import type { MeSubscriptionBundle } from '../subscriptions/subscriptions.types';
-import {
-  assertValidPassword,
-  normalizeUsername,
-} from './username.util';
+import { assertValidPassword, normalizeUsername } from './username.util';
 import { RegistrationService } from './registration.service';
 import { hashPassword, verifyPassword } from './password';
 import {
@@ -23,7 +18,7 @@ import {
   type MeResponse,
   type TokenPayload,
   type UserLanguage,
-  type UserRecord,
+  type UserRole,
   type UserTheme,
 } from './auth.types';
 import type { ChangePasswordDto } from './dto/change-password.dto';
@@ -41,7 +36,7 @@ export class AuthService {
   private readonly tokenSecret: string;
 
   constructor(
-    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @InjectRepository(UserEntity) private readonly usersRepo: Repository<UserEntity>,
     @Inject(ActivityService) private readonly activityService: ActivityService,
     @Inject(SubscriptionsService) private readonly subscriptionsService: SubscriptionsService,
     @Inject(EntitlementsService) private readonly entitlementsService: EntitlementsService,
@@ -54,34 +49,45 @@ export class AuthService {
     );
     const configuredSecret = configService.get<string>('AUTH_SECRET')?.trim();
     const nodeEnv = configService.get<string>('NODE_ENV')?.trim() || 'development';
-    if (nodeEnv === 'production' && (!configuredSecret || configuredSecret === defaultTokenSecret)) {
+    if (
+      nodeEnv === 'production' &&
+      (!configuredSecret || configuredSecret === defaultTokenSecret)
+    ) {
       throw new Error('AUTH_SECRET must be set to a strong unique value in production');
     }
     this.tokenSecret = configuredSecret || defaultTokenSecret;
   }
 
-  login(dto: LoginDto): { token: string; user: MeResponse } {
+  async login(dto: LoginDto): Promise<{ token: string; user: MeResponse }> {
     const username = normalizeUsername(dto.username);
-    const user = this.findUserRecordByUsername(username);
+    const user = await this.findUserRecordByUsername(username);
 
     if (user) {
       if (!verifyPassword(dto.password, user.password_hash)) {
-        throw new UnauthorizedException('Invalid username or password');
+        throw new UnauthorizedException({
+          statusCode: 401,
+          message: 'Invalid username or password',
+          code: 'INVALID_CREDENTIALS',
+        });
       }
-    } else if (this.registrationService.matchesPendingCredentials(username, dto.password)) {
-      throw new UnauthorizedException('Account email is not confirmed yet');
+    } else if (await this.registrationService.matchesPendingCredentials(username, dto.password)) {
+      throw new UnauthorizedException({
+        statusCode: 401,
+        message: 'Account email is not confirmed yet',
+        code: 'EMAIL_NOT_CONFIRMED',
+      });
     } else {
-      throw new UnauthorizedException('Invalid username or password');
+      throw new UnauthorizedException({
+        statusCode: 401,
+        message: 'Invalid username or password',
+        code: 'INVALID_CREDENTIALS',
+      });
     }
 
     const authUser = this.mapUser(user!);
     const now = new Date().toISOString();
-    this.databaseService.connection
-      .prepare(
-        'UPDATE users SET last_login_at = @lastLoginAt, updated_at = @lastLoginAt WHERE id = @id',
-      )
-      .run({ id: authUser.id, lastLoginAt: now });
-    this.activityService.record({
+    await this.usersRepo.update(authUser.id, { last_login_at: now, updated_at: now });
+    await this.activityService.record({
       actorId: authUser.id,
       userId: authUser.id,
       action: 'auth.login',
@@ -89,100 +95,90 @@ export class AuthService {
       targetId: authUser.id,
     });
 
-    const me = this.buildMeResponse({ ...authUser, lastLoginAt: now }, user!);
+    const me = await this.buildMeResponse({ ...authUser, lastLoginAt: now }, user!);
     return {
       token: this.signToken(me),
       user: me,
     };
   }
 
-  getMe(userId: number): MeResponse & { subscription: MeSubscriptionBundle } {
-    const user = this.getUserRecord(userId);
+  async getMe(userId: number): Promise<MeResponse & { subscription: MeSubscriptionBundle }> {
+    const user = await this.getUserRecord(userId);
     const authUser = this.mapUser(user);
-    const bundle = this.subscriptionsService.getMeSubscriptionBundle(userId);
+    const bundle = await this.subscriptionsService.getMeSubscriptionBundle(userId);
     return {
       ...this.buildMeResponse(authUser, user),
       subscription: {
         ...bundle,
-        entitlements: this.entitlementsService.getEffectiveEntitlements(userId),
+        entitlements: await this.entitlementsService.getEffectiveEntitlements(userId),
       },
     };
   }
 
-  getUser(id: number): AuthUser {
-    return this.mapUser(this.getUserRecord(id));
+  async getUser(id: number): Promise<AuthUser> {
+    return this.mapUser(await this.getUserRecord(id));
   }
 
-  updatePreferences(userId: number, dto: UpdatePreferencesDto): MeResponse & {
-    subscription: MeSubscriptionBundle;
-  } {
-    const user = this.getUser(userId);
+  async updatePreferences(
+    userId: number,
+    dto: UpdatePreferencesDto,
+  ): Promise<MeResponse & { subscription: MeSubscriptionBundle }> {
+    const user = await this.getUser(userId);
     const language: UserLanguage = dto.language ?? user.language;
     const theme: UserTheme = dto.theme ?? user.theme;
 
-    this.databaseService.connection
-      .prepare(
-        `
-          UPDATE users
-          SET language = @language, theme = @theme, updated_at = @updatedAt
-          WHERE id = @id
-        `,
-      )
-      .run({
-        id: userId,
-        language,
-        theme,
-        updatedAt: new Date().toISOString(),
-      });
+    await this.usersRepo.update(userId, {
+      language,
+      theme,
+      updated_at: new Date().toISOString(),
+    });
 
     return this.getMe(userId);
   }
 
-  updateProfile(userId: number, dto: UpdateProfileDto): MeResponse & { subscription: MeSubscriptionBundle } {
-    const fields: string[] = [];
-    const params: Record<string, string | number | null> = { id: userId, updatedAt: new Date().toISOString() };
+  async updateProfile(
+    userId: number,
+    dto: UpdateProfileDto,
+  ): Promise<MeResponse & { subscription: MeSubscriptionBundle }> {
+    const patch: Partial<UserEntity> = {};
     if (dto.firstName !== undefined) {
-      fields.push('first_name = @firstName');
-      params.firstName = dto.firstName?.trim() || null;
+      patch.first_name = dto.firstName?.trim() || null;
     }
     if (dto.lastName !== undefined) {
-      fields.push('last_name = @lastName');
-      params.lastName = dto.lastName?.trim() || null;
+      patch.last_name = dto.lastName?.trim() || null;
     }
     if (dto.patronymic !== undefined) {
-      fields.push('patronymic = @patronymic');
-      params.patronymic = dto.patronymic?.trim() || null;
+      patch.patronymic = dto.patronymic?.trim() || null;
     }
     if (dto.birthDate !== undefined) {
-      fields.push('birth_date = @birthDate');
-      params.birthDate = dto.birthDate?.trim() || null;
+      patch.birth_date = dto.birthDate?.trim() || null;
     }
-    if (fields.length > 0) {
-      this.databaseService.connection
-        .prepare(`UPDATE users SET ${fields.join(', ')}, updated_at = @updatedAt WHERE id = @id`)
-        .run(params);
+    if (Object.keys(patch).length > 0) {
+      patch.updated_at = new Date().toISOString();
+      await this.usersRepo.update(userId, patch);
     }
 
     return this.getMe(userId);
   }
 
-  changePassword(userId: number, dto: ChangePasswordDto): { ok: true } {
-    const user = this.getUserRecord(userId);
+  async changePassword(userId: number, dto: ChangePasswordDto): Promise<{ ok: true }> {
+    const user = await this.getUserRecord(userId);
     if (!verifyPassword(dto.currentPassword, user.password_hash)) {
-      throw new UnauthorizedException('Current password is incorrect');
+      throw new UnauthorizedException({
+        statusCode: 401,
+        message: 'Current password is incorrect',
+        code: 'CURRENT_PASSWORD_INVALID',
+      });
     }
     assertValidPassword(dto.newPassword);
-    this.databaseService.connection
-      .prepare('UPDATE users SET password_hash = @passwordHash, updated_at = @updatedAt WHERE id = @id')
-      .run({
-        id: userId,
-        passwordHash: hashPassword(dto.newPassword),
-        updatedAt: new Date().toISOString(),
-      });
+    await this.usersRepo.update(userId, {
+      password_hash: hashPassword(dto.newPassword),
+      updated_at: new Date().toISOString(),
+    });
     return { ok: true };
   }
 
-  verifyToken(token: string): AuthUser {
+  async verifyToken(token: string): Promise<AuthUser> {
     const payload = readSignedToken(token, this.tokenSecret);
 
     if (!payload) {
@@ -196,16 +192,16 @@ export class AuthService {
     return this.getUser(payload.sub);
   }
 
-  private findUserRecordByUsername(username: string): UserRecord | undefined {
-    return this.databaseService.connection
-      .prepare('SELECT * FROM users WHERE lower(username) = lower(?)')
-      .get(username) as UserRecord | undefined;
+  private async findUserRecordByUsername(username: string): Promise<UserEntity | undefined> {
+    const user = await this.usersRepo
+      .createQueryBuilder('u')
+      .where('lower(u.username) = lower(:username)', { username })
+      .getOne();
+    return user ?? undefined;
   }
 
-  private getUserRecord(id: number): UserRecord {
-    const user = this.databaseService.connection
-      .prepare('SELECT * FROM users WHERE id = ?')
-      .get(id) as UserRecord | undefined;
+  private async getUserRecord(id: number): Promise<UserEntity> {
+    const user = await this.usersRepo.findOne({ where: { id } });
     if (!user) {
       throw new UnauthorizedException('User was not found');
     }
@@ -222,7 +218,7 @@ export class AuthService {
     return createSignedToken(payload, this.tokenSecret);
   }
 
-  private buildMeResponse(authUser: AuthUser, record: UserRecord): MeResponse {
+  private buildMeResponse(authUser: AuthUser, record: UserEntity): MeResponse {
     return {
       ...authUser,
       profile: {
@@ -235,7 +231,7 @@ export class AuthService {
     };
   }
 
-  private mapUser(user: UserRecord): AuthUser {
+  private mapUser(user: UserEntity): AuthUser {
     const theme = USER_THEME_VALUES.includes(user.theme as UserTheme)
       ? (user.theme as UserTheme)
       : 'dark';
@@ -243,8 +239,8 @@ export class AuthService {
     return {
       id: user.id,
       username: user.username,
-      role: user.role,
-      language: user.language,
+      role: user.role as UserRole,
+      language: user.language as UserLanguage,
       theme,
       lastLoginAt: user.last_login_at,
     };

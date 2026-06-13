@@ -1,7 +1,12 @@
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
 import type { UserRole } from '../auth/auth.types';
-import { DatabaseService } from '../infra/database.service';
+import { currentMonthRangeIso } from '../database/db.util';
+import { AiUsageLogEntity } from '../database/entities/ai.entity';
+import { NoteEntity } from '../database/entities/note.entity';
+import { UserEntity } from '../database/entities/user.entity';
 import {
   DEFAULT_ADMIN_ENTITLEMENTS,
   type FilesEntitlement,
@@ -13,44 +18,46 @@ import { SubscriptionsService } from './subscriptions.service';
 @Injectable()
 export class EntitlementsService {
   constructor(
-    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @InjectRepository(UserEntity) private readonly usersRepo: Repository<UserEntity>,
+    @InjectRepository(NoteEntity) private readonly notesRepo: Repository<NoteEntity>,
+    @InjectRepository(AiUsageLogEntity)
+    private readonly aiUsageRepo: Repository<AiUsageLogEntity>,
     @Inject(SubscriptionsService) private readonly subscriptionsService: SubscriptionsService,
   ) {}
 
-  getEffectiveEntitlements(userId: number): PlanEntitlements {
-    const role = this.getUserRole(userId);
+  async getEffectiveEntitlements(userId: number): Promise<PlanEntitlements> {
+    const role = await this.getUserRole(userId);
     if (role === 'admin') {
       return DEFAULT_ADMIN_ENTITLEMENTS;
     }
 
-    return this.subscriptionsService.getMeSubscriptionBundle(userId).entitlements;
+    return (await this.subscriptionsService.getMeSubscriptionBundle(userId)).entitlements;
   }
 
-  getDefaultAiModel(userId: number): string | null {
-    if (this.getUserRole(userId) === 'admin') {
+  async getDefaultAiModel(userId: number): Promise<string | null> {
+    if ((await this.getUserRole(userId)) === 'admin') {
       return null;
     }
-    const model = this.subscriptionsService.getMeSubscriptionBundle(userId).entitlements.ai
-      .defaultModel;
-    return model ?? null;
+    const bundle = await this.subscriptionsService.getMeSubscriptionBundle(userId);
+    return bundle.entitlements.ai.defaultModel ?? null;
   }
 
-  isVersioningEnabled(userId: number): boolean {
-    if (this.getUserRole(userId) === 'admin') {
+  async isVersioningEnabled(userId: number): Promise<boolean> {
+    if ((await this.getUserRole(userId)) === 'admin') {
       return true;
     }
-    return this.getEffectiveEntitlements(userId).versioning.enabled;
+    return (await this.getEffectiveEntitlements(userId)).versioning.enabled;
   }
 
-  assertMonthlyAiTokenCapacity(userId: number, additionalTokens: number): void {
-    if (this.getUserRole(userId) === 'admin') {
+  async assertMonthlyAiTokenCapacity(userId: number, additionalTokens: number): Promise<void> {
+    if ((await this.getUserRole(userId)) === 'admin') {
       return;
     }
-    const limit = this.getEffectiveEntitlements(userId).ai.monthlyTokenLimit;
+    const limit = (await this.getEffectiveEntitlements(userId)).ai.monthlyTokenLimit;
     if (limit === null || limit === undefined) {
       return;
     }
-    const used = this.getMonthlyTokenUsage(userId);
+    const used = await this.getMonthlyTokenUsage(userId);
     if (used + additionalTokens > limit) {
       this.throwSubscriptionError(
         'SUBSCRIPTION_REQUIRED',
@@ -59,8 +66,8 @@ export class EntitlementsService {
     }
   }
 
-  assertAiAccess(userId: number): void {
-    const entitlements = this.getEffectiveEntitlements(userId);
+  async assertAiAccess(userId: number): Promise<void> {
+    const entitlements = await this.getEffectiveEntitlements(userId);
     if (!entitlements.ai.enabled) {
       this.throwSubscriptionError(
         'SUBSCRIPTION_REQUIRED',
@@ -69,8 +76,8 @@ export class EntitlementsService {
     }
   }
 
-  assertFilesAccess(userId: number): void {
-    const entitlements = this.getEffectiveEntitlements(userId);
+  async assertFilesAccess(userId: number): Promise<void> {
+    const entitlements = await this.getEffectiveEntitlements(userId);
     if (!entitlements.files.enabled) {
       this.throwSubscriptionError(
         'SUBSCRIPTION_REQUIRED',
@@ -79,15 +86,20 @@ export class EntitlementsService {
     }
   }
 
-  assertStorageCapacity(userId: number, additionalBytes: number): void {
-    this.assertFilesAccess(userId);
-    const entitlements = this.getEffectiveEntitlements(userId);
+  async assertStorageCapacity(userId: number, additionalBytes: number): Promise<void> {
+    const entitlements = await this.getEffectiveEntitlements(userId);
+    if (!entitlements.files.enabled) {
+      this.throwSubscriptionError(
+        'SUBSCRIPTION_REQUIRED',
+        'File storage is not available on your subscription plan',
+      );
+    }
     const limit = entitlements.files.storageLimitBytes;
     if (limit === null) {
       return;
     }
 
-    const used = this.getUserStorageBytes(userId);
+    const used = await this.getUserStorageBytes(userId);
     if (used + additionalBytes > limit) {
       this.throwSubscriptionError(
         'STORAGE_LIMIT_EXCEEDED',
@@ -96,8 +108,8 @@ export class EntitlementsService {
     }
   }
 
-  assertWorkspaceAccess(userId: number): void {
-    if (!this.getEffectiveEntitlements(userId).workspace.enabled) {
+  async assertWorkspaceAccess(userId: number): Promise<void> {
+    if (!(await this.getEffectiveEntitlements(userId)).workspace.enabled) {
       this.throwSubscriptionError(
         'SUBSCRIPTION_REQUIRED',
         'Workspace is not available on your subscription plan',
@@ -105,14 +117,20 @@ export class EntitlementsService {
     }
   }
 
-  assertNoteCreationAllowed(userId: number): void {
-    this.assertWorkspaceAccess(userId);
-    const limit = this.getEffectiveEntitlements(userId).workspace.maxNotes;
+  async assertNoteCreationAllowed(userId: number): Promise<void> {
+    const entitlements = await this.getEffectiveEntitlements(userId);
+    if (!entitlements.workspace.enabled) {
+      this.throwSubscriptionError(
+        'SUBSCRIPTION_REQUIRED',
+        'Workspace is not available on your subscription plan',
+      );
+    }
+    const limit = entitlements.workspace.maxNotes;
     if (limit === null) {
       return;
     }
 
-    const count = this.getUserNoteCount(userId);
+    const count = await this.getUserNoteCount(userId);
     if (count >= limit) {
       this.throwSubscriptionError(
         'NOTE_LIMIT_EXCEEDED',
@@ -121,9 +139,15 @@ export class EntitlementsService {
     }
   }
 
-  assertNoteContentSize(userId: number, contentBytes: number): void {
-    this.assertWorkspaceAccess(userId);
-    const limit = this.getEffectiveEntitlements(userId).workspace.maxNoteContentBytes;
+  async assertNoteContentSize(userId: number, contentBytes: number): Promise<void> {
+    const entitlements = await this.getEffectiveEntitlements(userId);
+    if (!entitlements.workspace.enabled) {
+      this.throwSubscriptionError(
+        'SUBSCRIPTION_REQUIRED',
+        'Workspace is not available on your subscription plan',
+      );
+    }
+    const limit = entitlements.workspace.maxNoteContentBytes;
     if (limit === null) {
       return;
     }
@@ -136,8 +160,8 @@ export class EntitlementsService {
     }
   }
 
-  assertPublicShareAccess(userId: number): void {
-    if (!this.getEffectiveEntitlements(userId).publicShare.enabled) {
+  async assertPublicShareAccess(userId: number): Promise<void> {
+    if (!(await this.getEffectiveEntitlements(userId)).publicShare.enabled) {
       this.throwSubscriptionError(
         'SUBSCRIPTION_REQUIRED',
         'Public sharing is not available on your subscription plan',
@@ -145,8 +169,8 @@ export class EntitlementsService {
     }
   }
 
-  assertTemplatesAccess(userId: number): void {
-    if (!this.getEffectiveEntitlements(userId).templates.enabled) {
+  async assertTemplatesAccess(userId: number): Promise<void> {
+    if (!(await this.getEffectiveEntitlements(userId)).templates.enabled) {
       this.throwSubscriptionError(
         'SUBSCRIPTION_REQUIRED',
         'Templates are not available on your subscription plan',
@@ -154,8 +178,8 @@ export class EntitlementsService {
     }
   }
 
-  assertVersioningAccess(userId: number): void {
-    if (!this.getEffectiveEntitlements(userId).versioning.enabled) {
+  async assertVersioningAccess(userId: number): Promise<void> {
+    if (!(await this.getEffectiveEntitlements(userId)).versioning.enabled) {
       this.throwSubscriptionError(
         'SUBSCRIPTION_REQUIRED',
         'Version history is not available on your subscription plan',
@@ -163,8 +187,8 @@ export class EntitlementsService {
     }
   }
 
-  assertExportImportAccess(userId: number): void {
-    if (!this.getEffectiveEntitlements(userId).exportImport.enabled) {
+  async assertExportImportAccess(userId: number): Promise<void> {
+    if (!(await this.getEffectiveEntitlements(userId)).exportImport.enabled) {
       this.throwSubscriptionError(
         'SUBSCRIPTION_REQUIRED',
         'Export and import are not available on your subscription plan',
@@ -172,50 +196,37 @@ export class EntitlementsService {
     }
   }
 
-  getUserStorageBytes(userId: number): number {
+  async getUserStorageBytes(userId: number): Promise<number> {
     return this.subscriptionsService.getUserStorageBytes(userId);
   }
 
-  getFilesEntitlement(userId: number): FilesEntitlement {
-    return this.getEffectiveEntitlements(userId).files;
+  async getFilesEntitlement(userId: number): Promise<FilesEntitlement> {
+    return (await this.getEffectiveEntitlements(userId)).files;
   }
 
-  private getUserNoteCount(userId: number): number {
-    const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT COUNT(*) as count
-          FROM notes
-          WHERE user_id = @userId AND deleted_at IS NULL
-        `,
-      )
-      .get({ userId }) as { count: number };
-    return row.count;
+  private async getUserNoteCount(userId: number): Promise<number> {
+    return this.notesRepo
+      .createQueryBuilder('n')
+      .where('n.user_id = :userId', { userId })
+      .andWhere('n.deleted_at IS NULL')
+      .getCount();
   }
 
-  private getUserRole(userId: number): UserRole {
-    const row = this.databaseService.connection
-      .prepare('SELECT role FROM users WHERE id = @userId')
-      .get({ userId }) as { role: UserRole } | undefined;
-    return row?.role ?? 'user';
+  private async getUserRole(userId: number): Promise<UserRole> {
+    const row = await this.usersRepo.findOne({ where: { id: userId }, select: { role: true } });
+    return (row?.role as UserRole) ?? 'user';
   }
 
-  private getMonthlyTokenUsage(userId: number): number {
-    const now = new Date();
-    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
-    const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
-    const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT COALESCE(SUM(input_tokens + output_tokens), 0) as tokens
-          FROM ai_usage_logs
-          WHERE user_id = @userId
-            AND created_at >= @monthStart
-            AND created_at < @monthEnd
-        `,
-      )
-      .get({ userId, monthStart, monthEnd }) as { tokens: number };
-    return row.tokens;
+  private async getMonthlyTokenUsage(userId: number): Promise<number> {
+    const { start, end } = currentMonthRangeIso();
+    const raw = await this.aiUsageRepo
+      .createQueryBuilder('u')
+      .select('COALESCE(SUM(u.input_tokens + u.output_tokens), 0)', 'tokens')
+      .where('u.user_id = :userId', { userId })
+      .andWhere('u.created_at >= :start', { start })
+      .andWhere('u.created_at < :end', { end })
+      .getRawOne<{ tokens: string }>();
+    return Number(raw?.tokens ?? 0);
   }
 
   private throwSubscriptionError(code: SubscriptionErrorCode, message: string): never {

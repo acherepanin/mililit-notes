@@ -1,10 +1,13 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
 import { AdminService } from '../admin/admin.service';
 import { redactSecretHtml, redactSecretText } from '../common/secret-redaction.util';
 import type { UserRole } from '../auth/auth.types';
-import { DatabaseService } from '../infra/database.service';
+import { nowIso } from '../database/db.util';
+import { AiAuditLogEntity } from '../database/entities/ai.entity';
 import { NotesService } from '../notes/notes.service';
 import { WorkspaceService } from '../workspace/workspace.service';
 import { AiEmbeddingsService } from './ai-embeddings.service';
@@ -421,7 +424,9 @@ const toolNameByProviderToolName = new Map(
 @Injectable()
 export class AiToolsService {
   constructor(
-    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @InjectRepository(AiAuditLogEntity)
+    private readonly auditRepo: Repository<AiAuditLogEntity>,
+    @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(NotesService) private readonly notesService: NotesService,
     @Inject(WorkspaceService) private readonly workspaceService: WorkspaceService,
     @Inject(AdminService) private readonly adminService: AdminService,
@@ -460,7 +465,7 @@ export class AiToolsService {
       allowedTools,
       'Current note: if a current selected note is provided, use its noteId for phrases like current note, selected note, opened note, this note, already created note. If no current note is provided and the user names a note, use notes.search first, then notes.read if you need exact content.',
       'Note tree model: every note may contain text and also have child notes. There is no separate folder-only entity. If the user asks to create a note inside/under/below/within the current selected note, под текущей заметкой, в подзаметке, дочернюю заметку or go deeper in the tree, call notes.create with parentId equal to the selected/current noteId. If the user names a parent note, find that parent with notes.search and use its id as parentId. If several parents match and there is no current note, ask a short clarification instead of creating in the wrong place.',
-      'Search: use notes.search for questions about where something is stored, passwords, deploy notes, sqlite, tags, or any phrase that may exist in note titles/text. Use notes.read after search when you need full note content or must edit a specific note.',
+      'Search: use notes.search for questions about where something is stored, passwords, deploy notes, tags, or any phrase that may exist in note titles/text. Use notes.read after search when you need full note content or must edit a specific note.',
       'Semantic search: use notes.semanticSearch when the user searches by meaning, asks broad natural-language questions, or uses words that may not exactly match note text. If semantic search returns weak or no results, use notes.search as a fallback.',
       'Reading: after notes.read, answer from the returned note content. If the content does not contain the requested data, say that clearly and suggest a narrower query.',
       'Creating notes: use notes.create with name, contentHtml and contentText. For root notes omit parentId. For child/subnotes set parentId to the parent note id; do not modify the parent content just to create a child. If the user gives credentials, access data, URLs, tokens or passwords, represent them as data fields, not as plain paragraphs.',
@@ -528,7 +533,7 @@ export class AiToolsService {
     }
 
     const result = await this.executeReadonly(userId, toolCall.name, toolCall.payload, context);
-    this.recordAudit(userId, toolCall.name, 'readonly', this.readTargetId(toolCall.payload), {
+    await this.recordAudit(userId, toolCall.name, 'readonly', this.readTargetId(toolCall.payload), {
       payloadKeys: Object.keys(toolCall.payload),
     });
 
@@ -540,24 +545,24 @@ export class AiToolsService {
     };
   }
 
-  executeAction(
+  async executeAction(
     userId: number,
     name: string,
     payload: Record<string, unknown>,
     allowedToolNames?: ReadonlySet<string>,
-  ): AiToolExecutionResponse {
+  ): Promise<AiToolExecutionResponse> {
     this.enforceToolAllowed(name, allowedToolNames);
 
     if (this.getToolMode(name) !== 'mutation') {
       throw new BadRequestException(`AI tool ${name} does not require confirmation`);
     }
 
-    const result = this.executeMutation(userId, name, payload);
-    this.recordAudit(userId, name, 'mutation', result.noteId, {
+    const result = await this.executeMutation(userId, name, payload);
+    await this.recordAudit(userId, name, 'mutation', result.noteId, {
       payloadKeys: Object.keys(payload),
       refreshTree: result.refreshTree,
     });
-    this.activityService.record({
+    await this.activityService.record({
       actorId: userId,
       userId,
       action: 'ai.tool.execute',
@@ -586,7 +591,7 @@ export class AiToolsService {
     switch (name) {
       case 'notes.search':
         return this.sanitizeReadonlyResult(
-          this.notesService.search(userId, this.readString(payload.query, 'query')),
+          await this.notesService.search(userId, this.readString(payload.query, 'query')),
           context,
         );
       case 'notes.semanticSearch':
@@ -601,45 +606,48 @@ export class AiToolsService {
         );
       case 'notes.read':
         return this.sanitizeReadonlyResult(
-          this.notesService.getById(userId, this.readNoteId(payload)),
+          await this.notesService.getById(userId, this.readNoteId(payload)),
           context,
         );
       case 'templates.list':
-        return this.sanitizeReadonlyResult(this.workspaceService.listTemplates(userId), context);
+        return this.sanitizeReadonlyResult(
+          await this.workspaceService.listTemplates(userId),
+          context,
+        );
       case 'versions.list':
         return this.sanitizeReadonlyResult(
-          this.notesService.listVersions(userId, this.readNoteId(payload)),
+          await this.notesService.listVersions(userId, this.readNoteId(payload)),
           context,
         );
       case 'attachments.list': {
         const noteId = this.readOptionalNoteId(payload);
         return noteId === null
-          ? this.workspaceService.listAccountAttachments(userId)
-          : this.workspaceService.listAttachments(userId, noteId);
+          ? await this.workspaceService.listAccountAttachments(userId)
+          : await this.workspaceService.listAttachments(userId, noteId);
       }
       case 'admin.users.list':
-        this.ensureAdminUser(userId);
+        await this.ensureAdminUser(userId);
         return this.adminService.listUsers();
       case 'admin.stats.read':
-        this.ensureAdminUser(userId);
+        await this.ensureAdminUser(userId);
         return this.adminService.getStats(this.readOptionalString(payload.range));
       default:
         throw new BadRequestException(`AI tool ${name} is not supported`);
     }
   }
 
-  private executeMutation(
+  private async executeMutation(
     userId: number,
     name: string,
     payload: Record<string, unknown>,
-  ): { data: unknown; noteId?: number; refreshTree: boolean } {
+  ): Promise<{ data: unknown; noteId?: number; refreshTree: boolean }> {
     switch (name) {
       case 'notes.create': {
-        const note = this.notesService.create(userId, {
+        const note = await this.notesService.create(userId, {
           name: this.readString(payload.name, 'name').slice(0, 120),
           parentId: this.readOptionalPositiveInt(payload.parentId, 'parentId'),
         });
-        const updated = this.notesService.update(userId, note.id, {
+        const updated = await this.notesService.update(userId, note.id, {
           contentHtml: this.readText(payload.contentHtml, 'contentHtml', '<p></p>'),
           contentText: this.readText(payload.contentText, 'contentText', ''),
           isFavorite: this.readOptionalBoolean(payload.isFavorite),
@@ -647,15 +655,15 @@ export class AiToolsService {
         });
         const tags = this.readStringArray(payload.tags).slice(0, 20);
         for (const tag of tags) {
-          this.notesService.createTag(userId, tag);
+          await this.notesService.createTag(userId, tag);
         }
         if (tags.length > 0) {
-          this.notesService.updateTags(userId, note.id, tags);
+          await this.notesService.updateTags(userId, note.id, tags);
         }
         return { data: updated, noteId: note.id, refreshTree: true };
       }
       case 'notes.createNestedBatch': {
-        const result = this.notesService.createNestedBatch(userId, {
+        const result = await this.notesService.createNestedBatch(userId, {
           parentScope: this.readBatchScope(payload),
           parentIds: this.readPositiveIntArray(payload.parentIds),
           parentNames: this.readStringArray(payload.parentNames),
@@ -694,7 +702,7 @@ export class AiToolsService {
           throw new BadRequestException('No note changes were provided');
         }
 
-        const updated = this.notesService.update(userId, noteId, {
+        const updated = await this.notesService.update(userId, noteId, {
           name,
           contentHtml,
           contentText,
@@ -705,30 +713,30 @@ export class AiToolsService {
         const noteId = this.readNoteId(payload);
         const tags = this.readStringArray(payload.tags).slice(0, 20);
         for (const tag of tags) {
-          this.notesService.createTag(userId, tag);
+          await this.notesService.createTag(userId, tag);
         }
-        const note = this.notesService.updateTags(userId, noteId, tags);
+        const note = await this.notesService.updateTags(userId, noteId, tags);
         return { data: note, noteId, refreshTree: true };
       }
       case 'notes.autotag': {
         const noteId = this.readNoteId(payload);
         const tags = this.readStringArray(payload.tags).slice(0, 8);
         for (const tag of tags) {
-          this.notesService.createTag(userId, tag);
+          await this.notesService.createTag(userId, tag);
         }
-        const note = this.notesService.updateTags(userId, noteId, tags);
+        const note = await this.notesService.updateTags(userId, noteId, tags);
         return { data: note, noteId, refreshTree: true };
       }
       case 'notes.favorite.set': {
         const noteId = this.readNoteId(payload);
-        const note = this.notesService.update(userId, noteId, {
+        const note = await this.notesService.update(userId, noteId, {
           isFavorite: this.readBoolean(payload.value, 'value'),
         });
         return { data: note, noteId, refreshTree: true };
       }
       case 'notes.pinned.set': {
         const noteId = this.readNoteId(payload);
-        const note = this.notesService.update(userId, noteId, {
+        const note = await this.notesService.update(userId, noteId, {
           isPinned: this.readBoolean(payload.value, 'value'),
         });
         return { data: note, noteId, refreshTree: true };
@@ -736,7 +744,7 @@ export class AiToolsService {
       case 'notes.delete': {
         const noteId = this.readNoteId(payload);
         return {
-          data: this.notesService.delete(userId, noteId),
+          data: await this.notesService.delete(userId, noteId),
           noteId,
           refreshTree: true,
         };
@@ -744,16 +752,16 @@ export class AiToolsService {
       case 'notes.deleteAll':
         this.ensureAllScope(payload);
         return {
-          data: this.notesService.deleteAll(userId),
+          data: await this.notesService.deleteAll(userId),
           refreshTree: true,
         };
       case 'notes.restore': {
         const noteId = this.readNoteId(payload);
-        const note = this.notesService.restore(userId, noteId);
+        const note = await this.notesService.restore(userId, noteId);
         return { data: note, noteId, refreshTree: true };
       }
       case 'templates.createNote': {
-        const note = this.workspaceService.createNoteFromTemplate(userId, {
+        const note = await this.workspaceService.createNoteFromTemplate(userId, {
           templateId: this.readPositiveInt(payload.templateId, 'templateId'),
           parentId: this.readOptionalPositiveInt(payload.parentId, 'parentId'),
         });
@@ -761,7 +769,7 @@ export class AiToolsService {
       }
       case 'versions.restore': {
         const noteId = this.readNoteId(payload);
-        const note = this.notesService.restoreVersion(
+        const note = await this.notesService.restoreVersion(
           userId,
           noteId,
           this.readPositiveInt(payload.versionId, 'versionId'),
@@ -772,7 +780,7 @@ export class AiToolsService {
         const attachmentId = this.readPositiveInt(payload.attachmentId, 'attachmentId');
         const noteId = this.readOptionalPositiveInt(payload.noteId, 'noteId');
         return {
-          data: this.workspaceService.attachAttachmentToNote(userId, attachmentId, { noteId }),
+          data: await this.workspaceService.attachAttachmentToNote(userId, attachmentId, { noteId }),
           noteId: noteId ?? undefined,
           refreshTree: false,
         };
@@ -780,7 +788,7 @@ export class AiToolsService {
       case 'shareLinks.create': {
         const noteId = this.readNoteId(payload);
         return {
-          data: this.workspaceService.createShareLink(userId, noteId, {
+          data: await this.workspaceService.createShareLink(userId, noteId, {
             ttlHours: this.readOptionalPositiveInt(payload.ttlHours, 'ttlHours') ?? 24,
             includeSecrets: this.readOptionalBoolean(payload.includeSecrets) ?? false,
             oneTime: this.readOptionalBoolean(payload.oneTime) ?? false,
@@ -1092,28 +1100,21 @@ export class AiToolsService {
       : {};
   }
 
-  private recordAudit(
+  private async recordAudit(
     userId: number,
     action: string,
     mode: AiToolMode,
     targetId: number | undefined,
     details: Record<string, unknown>,
-  ): void {
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO ai_audit_logs (user_id, action, target_type, target_id, details, created_at)
-          VALUES (@userId, @action, @targetType, @targetId, @details, @createdAt)
-        `,
-      )
-      .run({
-        userId,
-        action,
-        targetType: mode,
-        targetId: targetId ?? null,
-        details: JSON.stringify(details),
-        createdAt: new Date().toISOString(),
-      });
+  ): Promise<void> {
+    await this.auditRepo.insert({
+      user_id: userId,
+      action,
+      target_type: mode,
+      target_id: targetId ?? null,
+      details: JSON.stringify(details),
+      created_at: nowIso(),
+    });
   }
 
   private readTargetId(payload: Record<string, unknown>): number | undefined {
@@ -1279,12 +1280,12 @@ export class AiToolsService {
     }
   }
 
-  private ensureAdminUser(userId: number): void {
-    const row = this.databaseService.connection
-      .prepare('SELECT role FROM users WHERE id = ?')
-      .get(userId) as { role: UserRole } | undefined;
+  private async ensureAdminUser(userId: number): Promise<void> {
+    const rows = (await this.dataSource.query('SELECT role FROM users WHERE id = $1', [
+      userId,
+    ])) as Array<{ role: UserRole }>;
 
-    if (row?.role !== 'admin') {
+    if (rows[0]?.role !== 'admin') {
       throw new ForbiddenException('Admin AI tool is available only for admins');
     }
   }

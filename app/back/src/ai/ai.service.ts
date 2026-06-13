@@ -7,11 +7,19 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
-import { hideSecretValuesInHtml, redactSecretHtml, redactSecretText } from '../common/secret-redaction.util';
+import { redactSecretHtml, redactSecretText } from '../common/secret-redaction.util';
+import { currentMonthRangeIso, nowIso } from '../database/db.util';
+import {
+  AiProviderModelEntity,
+  AiProviderSettingsEntity,
+  AiUsageLogEntity,
+  AiUserSettingsEntity,
+} from '../database/entities/ai.entity';
 import { EntitlementsService } from '../subscriptions/entitlements.service';
-import { DatabaseService } from '../infra/database.service';
 import { AiCryptoService } from './ai-crypto.service';
 import { AiModelCatalogService } from './ai-model-catalog.service';
 import { calculateAiUsageCostUsd } from './ai-pricing';
@@ -72,7 +80,15 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
   private modelSyncInterval: NodeJS.Timeout | null = null;
 
   constructor(
-    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @InjectRepository(AiUserSettingsEntity)
+    private readonly userSettingsRepo: Repository<AiUserSettingsEntity>,
+    @InjectRepository(AiProviderSettingsEntity)
+    private readonly providerSettingsRepo: Repository<AiProviderSettingsEntity>,
+    @InjectRepository(AiProviderModelEntity)
+    private readonly providerModelsRepo: Repository<AiProviderModelEntity>,
+    @InjectRepository(AiUsageLogEntity)
+    private readonly usageRepo: Repository<AiUsageLogEntity>,
+    @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(AiCryptoService) private readonly aiCryptoService: AiCryptoService,
     @Inject(ActivityService) private readonly activityService: ActivityService,
     @Inject(AiModelCatalogService) private readonly aiModelCatalogService: AiModelCatalogService,
@@ -95,104 +111,77 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  getSettings(userId: number): AiSettingsResponse {
-    const settings = this.ensureSettings(userId);
-    return this.mapSettings(settings, this.listModels(userId, settings.provider_name));
+  async getSettings(userId: number): Promise<AiSettingsResponse> {
+    const settings = await this.ensureSettings(userId);
+    return this.mapSettings(settings, await this.listModels(userId, settings.provider_name));
   }
 
-  updateSettings(userId: number, dto: UpdateAiSettingsDto): AiSettingsResponse {
-    const current = this.ensureSettings(userId);
-    const now = new Date().toISOString();
+  async updateSettings(userId: number, dto: UpdateAiSettingsDto): Promise<AiSettingsResponse> {
+    const current = await this.ensureSettings(userId);
+    const now = nowIso();
     const nextProvider = this.normalizeText(dto.providerName, current.provider_name);
     const nextBaseUrl = dto.baseUrl
       ? this.normalizeBaseUrl(dto.baseUrl)
       : this.normalizeBaseUrl(current.base_url);
-    const providerSettings = this.ensureProviderSettings(userId, nextProvider, nextBaseUrl);
+    const providerSettings = await this.ensureProviderSettings(userId, nextProvider, nextBaseUrl);
     const nextModel =
       dto.model === null ? null : this.normalizeNullableText(dto.model, providerSettings.model);
-    const updates: Record<string, unknown> = {
-      userId,
+
+    const userUpdates: Partial<AiUserSettingsEntity> = {
       enabled: dto.enabled === undefined ? current.enabled : dto.enabled ? 1 : 0,
-      allowReadSecrets:
+      allow_read_secrets:
         dto.allowReadSecrets === undefined
           ? current.allow_read_secrets
           : dto.allowReadSecrets
             ? 1
             : 0,
-      requireActionConfirmation:
+      require_action_confirmation:
         dto.requireActionConfirmation === undefined
           ? current.require_action_confirmation
           : dto.requireActionConfirmation
             ? 1
             : 0,
-      dailyRequestLimit: this.normalizeLimit(dto.dailyRequestLimit, current.daily_request_limit),
-      dailyTokenLimit: this.normalizeLimit(dto.dailyTokenLimit, current.daily_token_limit),
-      providerName: nextProvider,
-      baseUrl: nextBaseUrl,
-      model: nextModel,
-      now,
+      daily_request_limit: this.normalizeLimit(dto.dailyRequestLimit, current.daily_request_limit),
+      daily_token_limit: this.normalizeLimit(dto.dailyTokenLimit, current.daily_token_limit),
+      provider_name: nextProvider,
+      base_url: nextBaseUrl,
+      updated_at: now,
     };
-    const providerAssignments = ['model = @model', 'updated_at = @now'];
+
+    const providerUpdates: Partial<AiProviderSettingsEntity> = {
+      model: nextModel,
+      updated_at: now,
+    };
 
     if (dto.clearApiKey) {
-      providerAssignments.push(
-        'api_key_encrypted = NULL',
-        'api_key_hint = NULL',
-        'api_key_updated_at = NULL',
-      );
+      providerUpdates.api_key_encrypted = null;
+      providerUpdates.api_key_hint = null;
+      providerUpdates.api_key_updated_at = null;
     } else if (dto.apiKey?.trim()) {
-      updates.apiKeyEncrypted = this.aiCryptoService.encrypt(dto.apiKey.trim());
-      updates.apiKeyHint = this.aiCryptoService.createHint(dto.apiKey.trim());
-      providerAssignments.push(
-        'api_key_encrypted = @apiKeyEncrypted',
-        'api_key_hint = @apiKeyHint',
-        'api_key_updated_at = @now',
-      );
+      providerUpdates.api_key_encrypted = this.aiCryptoService.encrypt(dto.apiKey.trim());
+      providerUpdates.api_key_hint = this.aiCryptoService.createHint(dto.apiKey.trim());
+      providerUpdates.api_key_updated_at = now;
     }
 
-    const transaction = this.databaseService.connection.transaction(() => {
-      this.databaseService.connection
-        .prepare(
-          `
-            UPDATE ai_user_settings
-            SET enabled = @enabled,
-                allow_read_secrets = @allowReadSecrets,
-                require_action_confirmation = @requireActionConfirmation,
-                daily_request_limit = @dailyRequestLimit,
-                daily_token_limit = @dailyTokenLimit,
-                provider_name = @providerName,
-                base_url = @baseUrl,
-                updated_at = @now
-            WHERE user_id = @userId
-          `,
-        )
-        .run(updates);
-
-      this.databaseService.connection
-        .prepare(
-          `
-            UPDATE ai_provider_settings
-            SET ${providerAssignments.join(', ')}
-            WHERE user_id = @userId
-              AND provider_name = @providerName
-              AND base_url = @baseUrl
-          `,
-        )
-        .run(updates);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(AiUserSettingsEntity, { user_id: userId }, userUpdates);
+      await manager.update(
+        AiProviderSettingsEntity,
+        { user_id: userId, provider_name: nextProvider, base_url: nextBaseUrl },
+        providerUpdates,
+      );
     });
 
-    transaction();
-
-    this.activityService.record({
+    await this.activityService.record({
       actorId: userId,
       userId,
       action: 'ai.settings.update',
       targetType: 'ai_settings',
       targetId: userId,
       details: {
-        enabled: Boolean(updates.enabled),
-        allowReadSecrets: Boolean(updates.allowReadSecrets),
-        requireActionConfirmation: Boolean(updates.requireActionConfirmation),
+        enabled: Boolean(userUpdates.enabled),
+        allowReadSecrets: Boolean(userUpdates.allow_read_secrets),
+        requireActionConfirmation: Boolean(userUpdates.require_action_confirmation),
         providerName: nextProvider,
         model: nextModel,
       },
@@ -202,10 +191,10 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
   }
 
   async syncModels(userId: number): Promise<AiSettingsResponse> {
-    const settings = this.ensureSettings(userId);
+    const settings = await this.ensureSettings(userId);
     const apiKey = this.getApiKey(settings);
     const url = this.buildProviderUrl(settings.base_url, 'models');
-    const now = new Date().toISOString();
+    const now = nowIso();
 
     try {
       const response = await fetch(url, {
@@ -231,11 +220,11 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
         )
         .filter((model): model is SyncedProviderModel => Boolean(model));
 
-      this.upsertModels(userId, settings.provider_name, models, now);
-      this.updateSyncState(userId, settings.provider_name, settings.base_url, 'ok', null, now);
+      await this.upsertModels(userId, settings.provider_name, models, now);
+      await this.updateSyncState(userId, settings.provider_name, settings.base_url, 'ok', null, now);
     } catch (caught) {
       const message = (caught as Error).message || 'Failed to sync models';
-      this.updateSyncState(
+      await this.updateSyncState(
         userId,
         settings.provider_name,
         settings.base_url,
@@ -252,66 +241,61 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
 
   async testConnection(userId: number): Promise<{ ok: boolean; checkedAt: string }> {
     await this.syncModels(userId);
-    const settings = this.ensureSettings(userId);
-    const checkedAt = new Date().toISOString();
-    this.databaseService.connection
-      .prepare(
-        `
-          UPDATE ai_provider_settings
-          SET last_connection_check_at = @checkedAt,
-              last_connection_check_status = 'ok',
-              updated_at = @checkedAt
-          WHERE user_id = @userId
-            AND provider_name = @providerName
-            AND base_url = @baseUrl
-        `,
-      )
-      .run({
-        userId,
-        providerName: settings.provider_name,
-        baseUrl: settings.base_url,
-        checkedAt,
-      });
+    const settings = await this.ensureSettings(userId);
+    const checkedAt = nowIso();
+    await this.providerSettingsRepo.update(
+      {
+        user_id: userId,
+        provider_name: settings.provider_name,
+        base_url: settings.base_url,
+      },
+      {
+        last_connection_check_at: checkedAt,
+        last_connection_check_status: 'ok',
+        updated_at: checkedAt,
+      },
+    );
 
     return { ok: true, checkedAt };
   }
 
-  getMonthlyUsage(userId: number): AiMonthlyUsageResponse {
-    const { monthStart, monthEnd } = this.getCurrentMonthRange();
-    const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT
-            ai_usage_logs.provider_name as providerName,
-            ai_usage_logs.model,
-            COUNT(*) as requests,
-            COALESCE(SUM(input_tokens), 0) as inputTokens,
-            COALESCE(SUM(output_tokens), 0) as outputTokens,
-            MAX(ai_provider_models.input_price_per_1m) as inputPricePer1M,
-            MAX(ai_provider_models.cached_input_price_per_1m) as cachedInputPricePer1M,
-            MAX(ai_provider_models.output_price_per_1m) as outputPricePer1M
-          FROM ai_usage_logs
-          LEFT JOIN ai_provider_models
-            ON ai_provider_models.user_id = ai_usage_logs.user_id
-           AND ai_provider_models.provider_name = ai_usage_logs.provider_name
-           AND ai_provider_models.model_id = ai_usage_logs.model
-          WHERE ai_usage_logs.user_id = @userId
-            AND ai_usage_logs.created_at >= @monthStart
-            AND ai_usage_logs.created_at < @monthEnd
-          GROUP BY ai_usage_logs.provider_name, ai_usage_logs.model
-          ORDER BY requests DESC, lower(ai_usage_logs.model) ASC
-        `,
-      )
-      .all({ userId, monthStart, monthEnd }) as Array<{
-      providerName: string;
-      model: string;
-      requests: number;
-      inputTokens: number;
-      outputTokens: number;
-      inputPricePer1M: number | null;
-      cachedInputPricePer1M: number | null;
-      outputPricePer1M: number | null;
-    }>;
+  async getMonthlyUsage(userId: number): Promise<AiMonthlyUsageResponse> {
+    const { start: monthStart, end: monthEnd } = currentMonthRangeIso();
+    const rawRows = (await this.dataSource.query(
+      `
+        SELECT
+          ai_usage_logs.provider_name as "providerName",
+          ai_usage_logs.model,
+          COUNT(*)::int as requests,
+          COALESCE(SUM(input_tokens), 0)::bigint as "inputTokens",
+          COALESCE(SUM(output_tokens), 0)::bigint as "outputTokens",
+          MAX(ai_provider_models.input_price_per_1m) as "inputPricePer1M",
+          MAX(ai_provider_models.cached_input_price_per_1m) as "cachedInputPricePer1M",
+          MAX(ai_provider_models.output_price_per_1m) as "outputPricePer1M"
+        FROM ai_usage_logs
+        LEFT JOIN ai_provider_models
+          ON ai_provider_models.user_id = ai_usage_logs.user_id
+         AND ai_provider_models.provider_name = ai_usage_logs.provider_name
+         AND ai_provider_models.model_id = ai_usage_logs.model
+        WHERE ai_usage_logs.user_id = $1
+          AND ai_usage_logs.created_at >= $2
+          AND ai_usage_logs.created_at < $3
+        GROUP BY ai_usage_logs.provider_name, ai_usage_logs.model
+        ORDER BY requests DESC, lower(ai_usage_logs.model) ASC
+      `,
+      [userId, monthStart, monthEnd],
+    )) as Array<Record<string, unknown>>;
+    const rows = rawRows.map((row) => ({
+      providerName: String(row.providerName),
+      model: String(row.model),
+      requests: Number(row.requests ?? 0),
+      inputTokens: Number(row.inputTokens ?? 0),
+      outputTokens: Number(row.outputTokens ?? 0),
+      inputPricePer1M: row.inputPricePer1M === null ? null : Number(row.inputPricePer1M),
+      cachedInputPricePer1M:
+        row.cachedInputPricePer1M === null ? null : Number(row.cachedInputPricePer1M),
+      outputPricePer1M: row.outputPricePer1M === null ? null : Number(row.outputPricePer1M),
+    }));
     let knownCostUsd = 0;
     let hasUnknownCost = false;
     let requests = 0;
@@ -358,22 +342,20 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async syncModelsForConfiguredUsers(): Promise<void> {
-    const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT user_settings.user_id
-          FROM ai_user_settings user_settings
-          JOIN ai_provider_settings provider_settings
-            ON provider_settings.user_id = user_settings.user_id
-           AND provider_settings.provider_name = user_settings.provider_name
-           AND provider_settings.base_url = user_settings.base_url
-          WHERE user_settings.enabled = 1
-            AND provider_settings.api_key_encrypted IS NOT NULL
-            AND trim(provider_settings.api_key_encrypted) != ''
-          ORDER BY user_settings.user_id ASC
-        `,
-      )
-      .all() as ConfiguredAiUserRow[];
+    const rows = (await this.dataSource.query(
+      `
+        SELECT user_settings.user_id
+        FROM ai_user_settings user_settings
+        JOIN ai_provider_settings provider_settings
+          ON provider_settings.user_id = user_settings.user_id
+         AND provider_settings.provider_name = user_settings.provider_name
+         AND provider_settings.base_url = user_settings.base_url
+        WHERE user_settings.enabled = 1
+          AND provider_settings.api_key_encrypted IS NOT NULL
+          AND trim(provider_settings.api_key_encrypted) != ''
+        ORDER BY user_settings.user_id ASC
+      `,
+    )) as ConfiguredAiUserRow[];
 
     for (const row of rows) {
       try {
@@ -391,37 +373,45 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     dto: SendAiMessageDto,
     options: AiChatOptions = {},
   ): Promise<AiChatResponse> {
-    this.entitlementsService.assertAiAccess(userId);
-    const settings = this.ensureSettings(userId);
+    await this.entitlementsService.assertAiAccess(userId);
+    const settings = await this.ensureSettings(userId);
 
     if (!settings.enabled) {
-      throw new BadRequestException('AI assistant is disabled');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI assistant is disabled',
+        code: 'AI_DISABLED',
+      });
     }
 
     const apiKey = this.getApiKey(settings);
-    const model =
-      settings.model?.trim() || this.entitlementsService.getDefaultAiModel(userId)?.trim() || null;
+    const defaultModel = await this.entitlementsService.getDefaultAiModel(userId);
+    const model = settings.model?.trim() || defaultModel?.trim() || null;
     const allowReadSecrets =
       options.allowReadSecretsOverride ?? Boolean(settings.allow_read_secrets);
 
     if (!model) {
-      throw new BadRequestException('AI model is not selected');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI model is not selected',
+        code: 'AI_MODEL_NOT_SELECTED',
+      });
     }
 
     if (this.isBareConfirmation(dto.message)) {
-      this.entitlementsService.assertMonthlyAiTokenCapacity(
+      await this.entitlementsService.assertMonthlyAiTokenCapacity(
         userId,
         this.estimateTokens(dto.message),
       );
-      this.enforceUsageLimits(userId, settings, this.estimateTokens(dto.message));
-      this.recordAiUsage(
+      await this.enforceUsageLimits(userId, settings, this.estimateTokens(dto.message));
+      await this.recordAiUsage(
         userId,
         settings.provider_name,
         model,
         this.estimateTokens(dto.message),
         0,
       );
-      this.recordChatActivity(userId, model, dto.message.length);
+      await this.recordChatActivity(userId, model, dto.message.length);
       return {
         message: {
           role: 'assistant',
@@ -451,8 +441,8 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       { role: 'user', content: dto.message.trim() },
     ];
     const estimatedInputTokens = this.estimateMessagesTokens(messages);
-    this.entitlementsService.assertMonthlyAiTokenCapacity(userId, estimatedInputTokens);
-    this.enforceUsageLimits(userId, settings, estimatedInputTokens);
+    await this.entitlementsService.assertMonthlyAiTokenCapacity(userId, estimatedInputTokens);
+    await this.enforceUsageLimits(userId, settings, estimatedInputTokens);
     const tools = this.aiToolsService.getOpenAiTools(options.allowedToolNames);
     const response = await fetch(this.buildProviderUrl(settings.base_url, 'chat/completions'), {
       method: 'POST',
@@ -508,8 +498,8 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       const shouldConfirmActions =
         options.requireActionConfirmationOverride ?? Boolean(settings.require_action_confirmation);
 
-      this.recordAiUsage(userId, settings.provider_name, model, inputTokens, outputTokens);
-      this.recordChatActivity(userId, model, dto.message.length);
+      await this.recordAiUsage(userId, settings.provider_name, model, inputTokens, outputTokens);
+      await this.recordChatActivity(userId, model, dto.message.length);
 
       if (!shouldConfirmActions && actions.length > 0) {
         const executions: AiToolExecutionResponse[] = [];
@@ -520,7 +510,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
 
         for (const action of actions) {
           try {
-            const execution = this.aiToolsService.executeAction(
+            const execution = await this.aiToolsService.executeAction(
               userId,
               action.name,
               action.payload,
@@ -556,27 +546,35 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     const content = payload.choices?.[0]?.message?.content;
 
     if (typeof content !== 'string' || !content.trim()) {
-      throw new BadRequestException('AI provider returned an empty response');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI provider returned an empty response',
+        code: 'AI_EMPTY_RESPONSE',
+      });
     }
 
-    this.recordAiUsage(
+    await this.recordAiUsage(
       userId,
       settings.provider_name,
       model,
       inputTokens,
       this.readTokenUsage(payload.usage?.completion_tokens) ?? this.estimateTokens(content),
     );
-    this.recordChatActivity(userId, model, dto.message.length);
+    await this.recordChatActivity(userId, model, dto.message.length);
 
     return { message: { role: 'assistant', content: content.trim() } };
   }
 
   async transcribeAudio(userId: number, audio: AiAudioTranscriptionInput): Promise<string> {
-    this.entitlementsService.assertAiAccess(userId);
-    const settings = this.ensureSettings(userId);
+    await this.entitlementsService.assertAiAccess(userId);
+    const settings = await this.ensureSettings(userId);
 
     if (!settings.enabled) {
-      throw new BadRequestException('AI assistant is disabled');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI assistant is disabled',
+        code: 'AI_DISABLED',
+      });
     }
 
     const apiKey = this.getApiKey(settings);
@@ -587,8 +585,8 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
 
     formData.append('model', model);
     formData.append('file', new Blob([audioBytes], { type: audio.mimeType }), audio.fileName);
-    this.enforceUsageLimits(userId, settings, 0);
-    this.entitlementsService.assertMonthlyAiTokenCapacity(
+    await this.enforceUsageLimits(userId, settings, 0);
+    await this.entitlementsService.assertMonthlyAiTokenCapacity(
       userId,
       this.estimateTokens(audio.fileName) + 512,
     );
@@ -613,24 +611,28 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     const text = typeof payload.text === 'string' ? payload.text.trim() : '';
 
     if (!text) {
-      throw new BadRequestException('AI transcription returned empty text');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI transcription returned empty text',
+        code: 'AI_EMPTY_RESPONSE',
+      });
     }
 
     const inputTokens = this.readTokenUsage(payload.usage?.input_tokens) ?? 0;
     const outputTokens =
       this.readTokenUsage(payload.usage?.output_tokens) ?? this.estimateTokens(text);
-    this.entitlementsService.assertMonthlyAiTokenCapacity(userId, inputTokens + outputTokens);
-    this.recordAiUsage(userId, settings.provider_name, model, inputTokens, outputTokens);
+    await this.entitlementsService.assertMonthlyAiTokenCapacity(userId, inputTokens + outputTokens);
+    await this.recordAiUsage(userId, settings.provider_name, model, inputTokens, outputTokens);
 
     return text;
   }
 
-  executeAction(
+  async executeAction(
     userId: number,
     dto: ExecuteAiToolDto,
     options: Pick<AiChatOptions, 'allowedToolNames'> = {},
-  ): AiToolExecutionResponse {
-    this.entitlementsService.assertAiAccess(userId);
+  ): Promise<AiToolExecutionResponse> {
+    await this.entitlementsService.assertAiAccess(userId);
     return this.aiToolsService.executeAction(
       userId,
       dto.name,
@@ -639,8 +641,12 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private recordChatActivity(userId: number, model: string, messageLength: number): void {
-    this.activityService.record({
+  private async recordChatActivity(
+    userId: number,
+    model: string,
+    messageLength: number,
+  ): Promise<void> {
+    await this.activityService.record({
       actorId: userId,
       userId,
       action: 'ai.chat',
@@ -650,211 +656,173 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private recordAiUsage(
+  private async recordAiUsage(
     userId: number,
     providerName: string,
     model: string,
     inputTokens: number,
     outputTokens: number,
-  ): void {
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO ai_usage_logs
-            (user_id, provider_name, model, input_tokens, output_tokens, created_at)
-          VALUES (@userId, @providerName, @model, @inputTokens, @outputTokens, @createdAt)
-        `,
-      )
-      .run({
-        userId,
-        providerName,
-        model,
-        inputTokens: Math.max(0, Math.trunc(inputTokens)),
-        outputTokens: Math.max(0, Math.trunc(outputTokens)),
-        createdAt: new Date().toISOString(),
-      });
+  ): Promise<void> {
+    await this.usageRepo.insert({
+      user_id: userId,
+      provider_name: providerName,
+      model,
+      input_tokens: Math.max(0, Math.trunc(inputTokens)),
+      output_tokens: Math.max(0, Math.trunc(outputTokens)),
+      created_at: nowIso(),
+    });
   }
 
-  private enforceUsageLimits(
+  private async enforceUsageLimits(
     userId: number,
     settings: AiSettingsRow,
     nextInputTokens: number,
-  ): void {
-    const usage = this.getUsageToday(userId);
+  ): Promise<void> {
+    const usage = await this.getUsageToday(userId);
 
     if (settings.daily_request_limit !== null && usage.requests >= settings.daily_request_limit) {
-      throw new BadRequestException('Daily AI request limit is reached');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'Daily AI request limit is reached',
+        code: 'AI_DAILY_REQUEST_LIMIT',
+      });
     }
 
     if (
       settings.daily_token_limit !== null &&
       usage.tokens + nextInputTokens > settings.daily_token_limit
     ) {
-      throw new BadRequestException('Daily AI token limit is reached');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'Daily AI token limit is reached',
+        code: 'AI_DAILY_TOKEN_LIMIT',
+      });
     }
   }
 
-  private getUsageToday(userId: number): AiUsageSummary {
+  private async getUsageToday(userId: number): Promise<AiUsageSummary> {
     const dayStart = new Date();
     dayStart.setHours(0, 0, 0, 0);
-    const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT
-            COUNT(*) as requests,
-            COALESCE(SUM(input_tokens), 0) as inputTokens,
-            COALESCE(SUM(output_tokens), 0) as outputTokens
-          FROM ai_usage_logs
-          WHERE user_id = @userId AND created_at >= @dayStart
-        `,
-      )
-      .get({ userId, dayStart: dayStart.toISOString() }) as
-      | { requests: number; inputTokens: number; outputTokens: number }
-      | undefined;
-    const inputTokens = row?.inputTokens ?? 0;
-    const outputTokens = row?.outputTokens ?? 0;
+    const rows = (await this.dataSource.query(
+      `
+        SELECT
+          COUNT(*)::int as requests,
+          COALESCE(SUM(input_tokens), 0)::bigint as "inputTokens",
+          COALESCE(SUM(output_tokens), 0)::bigint as "outputTokens"
+        FROM ai_usage_logs
+        WHERE user_id = $1 AND created_at >= $2
+      `,
+      [userId, dayStart.toISOString()],
+    )) as Array<{ requests: unknown; inputTokens: unknown; outputTokens: unknown }>;
+    const row = rows[0];
+    const inputTokens = Number(row?.inputTokens ?? 0);
+    const outputTokens = Number(row?.outputTokens ?? 0);
 
     return {
-      requests: row?.requests ?? 0,
+      requests: Number(row?.requests ?? 0),
       inputTokens,
       outputTokens,
       tokens: inputTokens + outputTokens,
     };
   }
 
-  private getCurrentMonthRange(): { monthStart: string; monthEnd: string } {
-    const start = new Date();
-    start.setUTCDate(1);
-    start.setUTCHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setUTCMonth(end.getUTCMonth() + 1);
-
-    return { monthStart: start.toISOString(), monthEnd: end.toISOString() };
-  }
-
-  private ensureSettings(userId: number): AiSettingsRow {
-    const existing = this.getActiveSettings(userId);
+  private async ensureSettings(userId: number): Promise<AiSettingsRow> {
+    const existing = await this.getActiveSettings(userId);
 
     if (existing) {
       return existing;
     }
 
-    const now = new Date().toISOString();
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO ai_user_settings
-            (user_id, enabled, allow_read_secrets, require_action_confirmation, provider_name, base_url, created_at, updated_at)
-          VALUES (@userId, 0, 0, 1, @providerName, @baseUrl, @now, @now)
-        `,
-      )
-      .run({ userId, providerName: defaultProviderName, baseUrl: defaultBaseUrl, now });
+    await this.userSettingsRepo
+      .createQueryBuilder()
+      .insert()
+      .into(AiUserSettingsEntity)
+      .values({
+        user_id: userId,
+        enabled: 0,
+        allow_read_secrets: 0,
+        require_action_confirmation: 1,
+        provider_name: defaultProviderName,
+        base_url: defaultBaseUrl,
+      })
+      .orIgnore()
+      .execute();
 
-    this.ensureProviderSettings(userId, defaultProviderName, defaultBaseUrl);
+    await this.ensureProviderSettings(userId, defaultProviderName, defaultBaseUrl);
 
-    return this.getActiveSettings(userId) as AiSettingsRow;
+    return (await this.getActiveSettings(userId)) as AiSettingsRow;
   }
 
-  private getActiveSettings(userId: number): AiSettingsRow | undefined {
-    const active = this.databaseService.connection
-      .prepare(
-        `
-          SELECT
-            user_settings.user_id,
-            user_settings.enabled,
-            user_settings.allow_read_secrets,
-            user_settings.require_action_confirmation,
-            user_settings.daily_request_limit,
-            user_settings.daily_token_limit,
-            user_settings.provider_name,
-            user_settings.base_url,
-            provider_settings.model,
-            provider_settings.api_key_encrypted,
-            provider_settings.api_key_hint,
-            provider_settings.api_key_updated_at,
-            provider_settings.last_connection_check_at,
-            provider_settings.last_connection_check_status,
-            provider_settings.last_models_sync_at,
-            provider_settings.models_sync_status,
-            provider_settings.models_sync_error,
-            user_settings.created_at,
-            user_settings.updated_at
-          FROM ai_user_settings user_settings
-          LEFT JOIN ai_provider_settings provider_settings
-            ON provider_settings.user_id = user_settings.user_id
-           AND provider_settings.provider_name = user_settings.provider_name
-           AND provider_settings.base_url = user_settings.base_url
-          WHERE user_settings.user_id = ?
-        `,
-      )
-      .get(userId) as AiSettingsRow | undefined;
+  private async getActiveSettings(userId: number): Promise<AiSettingsRow | undefined> {
+    const rows = (await this.dataSource.query(
+      `
+        SELECT
+          user_settings.user_id,
+          user_settings.enabled,
+          user_settings.allow_read_secrets,
+          user_settings.require_action_confirmation,
+          user_settings.daily_request_limit,
+          user_settings.daily_token_limit,
+          user_settings.provider_name,
+          user_settings.base_url,
+          provider_settings.user_id as provider_present,
+          provider_settings.model,
+          provider_settings.api_key_encrypted,
+          provider_settings.api_key_hint,
+          provider_settings.api_key_updated_at,
+          provider_settings.last_connection_check_at,
+          provider_settings.last_connection_check_status,
+          provider_settings.last_models_sync_at,
+          provider_settings.models_sync_status,
+          provider_settings.models_sync_error,
+          user_settings.created_at,
+          user_settings.updated_at
+        FROM ai_user_settings user_settings
+        LEFT JOIN ai_provider_settings provider_settings
+          ON provider_settings.user_id = user_settings.user_id
+         AND provider_settings.provider_name = user_settings.provider_name
+         AND provider_settings.base_url = user_settings.base_url
+        WHERE user_settings.user_id = $1
+      `,
+      [userId],
+    )) as Array<AiSettingsRow & { provider_present: number | null }>;
+
+    const active = rows[0];
 
     if (!active) {
       return undefined;
     }
 
-    if (active.model === undefined) {
-      this.ensureProviderSettings(userId, active.provider_name, active.base_url);
+    if (active.provider_present === null) {
+      await this.ensureProviderSettings(userId, active.provider_name, active.base_url);
       return this.getActiveSettings(userId);
     }
 
     return active;
   }
 
-  private ensureProviderSettings(
+  private async ensureProviderSettings(
     userId: number,
     providerName: string,
     baseUrl: string,
-  ): AiProviderSettingsRow {
-    const existing = this.databaseService.connection
-      .prepare(
-        `
-          SELECT *
-          FROM ai_provider_settings
-          WHERE user_id = @userId
-            AND provider_name = @providerName
-            AND base_url = @baseUrl
-        `,
-      )
-      .get({ userId, providerName, baseUrl }) as AiProviderSettingsRow | undefined;
+  ): Promise<AiProviderSettingsRow> {
+    await this.providerSettingsRepo
+      .createQueryBuilder()
+      .insert()
+      .into(AiProviderSettingsEntity)
+      .values({ user_id: userId, provider_name: providerName, base_url: baseUrl })
+      .orIgnore()
+      .execute();
 
-    if (existing) {
-      return existing;
-    }
-
-    const now = new Date().toISOString();
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO ai_provider_settings
-            (user_id, provider_name, base_url, created_at, updated_at)
-          VALUES (@userId, @providerName, @baseUrl, @now, @now)
-        `,
-      )
-      .run({ userId, providerName, baseUrl, now });
-
-    return this.databaseService.connection
-      .prepare(
-        `
-          SELECT *
-          FROM ai_provider_settings
-          WHERE user_id = @userId
-            AND provider_name = @providerName
-            AND base_url = @baseUrl
-        `,
-      )
-      .get({ userId, providerName, baseUrl }) as AiProviderSettingsRow;
+    return this.providerSettingsRepo.findOneOrFail({
+      where: { user_id: userId, provider_name: providerName, base_url: baseUrl },
+    }) as unknown as Promise<AiProviderSettingsRow>;
   }
 
-  private listModels(userId: number, providerName: string): AiModelResponse[] {
-    const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT * FROM ai_provider_models
-          WHERE user_id = @userId AND provider_name = @providerName
-        `,
-      )
-      .all({ userId, providerName }) as AiModelRow[];
+  private async listModels(userId: number, providerName: string): Promise<AiModelResponse[]> {
+    const rows = (await this.providerModelsRepo.find({
+      where: { user_id: userId, provider_name: providerName },
+    })) as unknown as AiModelRow[];
 
     return rows
       .map((row) => {
@@ -899,107 +867,108 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       });
   }
 
-  private upsertModels(
+  private async upsertModels(
     userId: number,
     providerName: string,
     models: SyncedProviderModel[],
     now: string,
-  ): void {
+  ): Promise<void> {
     const uniqueModels = [...new Map(models.map((model) => [model.modelId, model])).values()];
-    const transaction = this.databaseService.connection.transaction(() => {
-      this.databaseService.connection
-        .prepare(
-          `
-            UPDATE ai_provider_models
-            SET is_deprecated = 1, updated_at = @now
-            WHERE user_id = @userId AND provider_name = @providerName
-          `,
-        )
-        .run({ userId, providerName, now });
-
-      const statement = this.databaseService.connection.prepare(
-        `
-          INSERT INTO ai_provider_models
-            (user_id, provider_name, model_id, label, tier, quality, speed, cost, capabilities,
-             input_price_per_1m, cached_input_price_per_1m, output_price_per_1m,
-             provider_created_at, is_deprecated, last_seen_at, created_at, updated_at)
-          VALUES
-            (@userId, @providerName, @modelId, @label, @tier, @quality, @speed, @cost,
-             @capabilities, @inputPricePer1M, @cachedInputPricePer1M, @outputPricePer1M,
-             @providerCreatedAt, 0, @now, @now, @now)
-          ON CONFLICT(user_id, provider_name, model_id) DO UPDATE SET
-            label = excluded.label,
-            tier = excluded.tier,
-            quality = excluded.quality,
-            speed = excluded.speed,
-            cost = excluded.cost,
-            capabilities = excluded.capabilities,
-            input_price_per_1m = excluded.input_price_per_1m,
-            cached_input_price_per_1m = excluded.cached_input_price_per_1m,
-            output_price_per_1m = excluded.output_price_per_1m,
-            provider_created_at = COALESCE(excluded.provider_created_at, ai_provider_models.provider_created_at),
-            is_deprecated = 0,
-            last_seen_at = excluded.last_seen_at,
-            updated_at = excluded.updated_at
-        `,
-      );
-
-      for (const model of uniqueModels) {
-        const pricing = this.aiModelCatalogService.getPricing(model.modelId);
-        statement.run({
-          userId,
-          providerName,
-          modelId: model.modelId,
-          label: model.modelId,
-          ...this.aiModelCatalogService.classifyModel(model.modelId),
-          inputPricePer1M: pricing.inputPricePer1M,
-          cachedInputPricePer1M: pricing.cachedInputPricePer1M,
-          outputPricePer1M: pricing.outputPricePer1M,
-          capabilities: JSON.stringify(['chat']),
-          providerCreatedAt: model.providerCreatedAt,
-          now,
-        });
-      }
+    const values = uniqueModels.map((model) => {
+      const pricing = this.aiModelCatalogService.getPricing(model.modelId);
+      const classification = this.aiModelCatalogService.classifyModel(model.modelId);
+      return {
+        user_id: userId,
+        provider_name: providerName,
+        model_id: model.modelId,
+        label: model.modelId,
+        tier: classification.tier,
+        quality: classification.quality,
+        speed: classification.speed,
+        cost: classification.cost,
+        capabilities: JSON.stringify(['chat']),
+        input_price_per_1m: pricing.inputPricePer1M,
+        cached_input_price_per_1m: pricing.cachedInputPricePer1M,
+        output_price_per_1m: pricing.outputPricePer1M,
+        provider_created_at: model.providerCreatedAt,
+        is_deprecated: 0,
+        last_seen_at: now,
+        created_at: now,
+        updated_at: now,
+      };
     });
 
-    transaction();
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(
+        AiProviderModelEntity,
+        { user_id: userId, provider_name: providerName },
+        { is_deprecated: 1, updated_at: now },
+      );
+
+      if (values.length === 0) {
+        return;
+      }
+
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(AiProviderModelEntity)
+        .values(values)
+        .orUpdate(
+          [
+            'label',
+            'tier',
+            'quality',
+            'speed',
+            'cost',
+            'capabilities',
+            'input_price_per_1m',
+            'cached_input_price_per_1m',
+            'output_price_per_1m',
+            'provider_created_at',
+            'is_deprecated',
+            'last_seen_at',
+            'updated_at',
+          ],
+          ['user_id', 'provider_name', 'model_id'],
+        )
+        .execute();
+    });
   }
 
-  private updateSyncState(
+  private async updateSyncState(
     userId: number,
     providerName: string,
     baseUrl: string,
     status: 'ok' | 'error',
     error: string | null,
     syncedAt: string,
-  ): void {
-    this.databaseService.connection
-      .prepare(
-        `
-          UPDATE ai_provider_settings
-          SET last_models_sync_at = @syncedAt,
-              models_sync_status = @status,
-              models_sync_error = @error,
-              updated_at = @syncedAt
-          WHERE user_id = @userId
-            AND provider_name = @providerName
-            AND base_url = @baseUrl
-        `,
-      )
-      .run({ userId, providerName, baseUrl, status, error, syncedAt });
+  ): Promise<void> {
+    await this.providerSettingsRepo.update(
+      { user_id: userId, provider_name: providerName, base_url: baseUrl },
+      {
+        last_models_sync_at: syncedAt,
+        models_sync_status: status,
+        models_sync_error: error,
+        updated_at: syncedAt,
+      },
+    );
   }
 
-  private mapSettings(settings: AiSettingsRow, models: AiModelResponse[]): AiSettingsResponse {
+  private async mapSettings(
+    settings: AiSettingsRow,
+    models: AiModelResponse[],
+  ): Promise<AiSettingsResponse> {
     return {
       enabled: Boolean(settings.enabled),
       allowReadSecrets: Boolean(settings.allow_read_secrets),
       requireActionConfirmation: Boolean(settings.require_action_confirmation),
       dailyRequestLimit: settings.daily_request_limit,
       dailyTokenLimit: settings.daily_token_limit,
-      usageToday: this.getUsageToday(settings.user_id),
+      usageToday: await this.getUsageToday(settings.user_id),
       providerName: settings.provider_name,
       baseUrl: settings.base_url,
-      model: settings.model ?? this.entitlementsService.getDefaultAiModel(settings.user_id),
+      model: settings.model ?? (await this.entitlementsService.getDefaultAiModel(settings.user_id)),
       hasApiKey: Boolean(settings.api_key_encrypted),
       apiKeyHint: settings.api_key_hint,
       apiKeyUpdatedAt: settings.api_key_updated_at,
@@ -1009,21 +978,17 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       modelsSyncStatus: settings.models_sync_status,
       modelsSyncError: settings.models_sync_error,
       models,
-      providers: this.listSavedProviders(settings.user_id),
+      providers: await this.listSavedProviders(settings.user_id),
     };
   }
 
-  private listSavedProviders(userId: number): AiSavedProviderResponse[] {
-    const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT *
-          FROM ai_provider_settings
-          WHERE user_id = @userId
-          ORDER BY updated_at DESC, id DESC
-        `,
-      )
-      .all({ userId }) as AiProviderSettingsRow[];
+  private async listSavedProviders(userId: number): Promise<AiSavedProviderResponse[]> {
+    const rows = (await this.providerSettingsRepo
+      .createQueryBuilder('p')
+      .where('p.user_id = :userId', { userId })
+      .orderBy('p.updated_at', 'DESC')
+      .addOrderBy('p.id', 'DESC')
+      .getMany()) as unknown as AiProviderSettingsRow[];
 
     return rows.map((row) => ({
       providerName: row.provider_name,
@@ -1145,7 +1110,11 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     const apiKey = this.aiCryptoService.decrypt(settings.api_key_encrypted);
 
     if (!apiKey) {
-      throw new BadRequestException('AI API key is not configured or cannot be decrypted');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI API key is not configured or cannot be decrypted',
+        code: 'AI_KEY_MISSING',
+      });
     }
 
     return apiKey;
@@ -1204,7 +1173,11 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
 
       return url.href.replace(/\/+$/, '');
     } catch {
-      throw new BadRequestException('AI provider base URL must be a valid HTTPS URL');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI provider base URL must be a valid HTTPS URL',
+        code: 'AI_BASE_URL_INVALID',
+      });
     }
   }
 

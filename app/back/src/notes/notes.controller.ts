@@ -33,32 +33,35 @@ export class NotesController {
   constructor(@Inject(NotesService) private readonly notesService: NotesService) {}
 
   @Get('tree')
-  getTree(@Req() request: AuthenticatedRequest): NoteTreeNode[] {
+  getTree(@Req() request: AuthenticatedRequest): Promise<NoteTreeNode[]> {
     return this.notesService.getTree(request.user.id);
   }
 
   @Get('trash')
-  listTrash(@Req() request: AuthenticatedRequest): NoteResponse[] {
+  listTrash(@Req() request: AuthenticatedRequest): Promise<NoteResponse[]> {
     return this.notesService.listTrash(request.user.id);
   }
 
   @Get('search')
-  search(@Req() request: AuthenticatedRequest, @Query('q') query = ''): NoteSearchResult[] {
+  search(
+    @Req() request: AuthenticatedRequest,
+    @Query('q') query = '',
+  ): Promise<NoteSearchResult[]> {
     return this.notesService.search(request.user.id, query);
   }
 
   @Post('search/reindex')
-  rebuildSearchIndex(@Req() request: AuthenticatedRequest): { indexed: number } {
+  rebuildSearchIndex(@Req() request: AuthenticatedRequest): Promise<{ indexed: number }> {
     return this.notesService.rebuildSearchIndex(request.user.id);
   }
 
   @Get('tags')
-  listTags(@Req() request: AuthenticatedRequest): TagResponse[] {
+  listTags(@Req() request: AuthenticatedRequest): Promise<TagResponse[]> {
     return this.notesService.listTags(request.user.id);
   }
 
   @Post('tags')
-  createTag(@Req() request: AuthenticatedRequest, @Body() dto: CreateTagDto): TagResponse {
+  createTag(@Req() request: AuthenticatedRequest, @Body() dto: CreateTagDto): Promise<TagResponse> {
     return this.notesService.createTag(request.user.id, dto.name);
   }
 
@@ -66,7 +69,7 @@ export class NotesController {
   deleteTag(
     @Req() request: AuthenticatedRequest,
     @Param('tagId', ParseIntPipe) tagId: number,
-  ): { id: number } {
+  ): Promise<{ id: number }> {
     return this.notesService.deleteTag(request.user.id, tagId);
   }
 
@@ -75,7 +78,7 @@ export class NotesController {
     @Req() request: AuthenticatedRequest,
     @Param('tagId', ParseIntPipe) tagId: number,
     @Body() dto: UpdateTagDto,
-  ): TagResponse {
+  ): Promise<TagResponse> {
     return this.notesService.updateTag(request.user.id, tagId, dto.name);
   }
 
@@ -83,12 +86,12 @@ export class NotesController {
   getById(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): NoteResponse {
+  ): Promise<NoteResponse> {
     return this.notesService.getById(request.user.id, id);
   }
 
   @Post()
-  create(@Req() request: AuthenticatedRequest, @Body() dto: CreateNoteDto): NoteResponse {
+  create(@Req() request: AuthenticatedRequest, @Body() dto: CreateNoteDto): Promise<NoteResponse> {
     return this.notesService.create(request.user.id, dto);
   }
 
@@ -97,7 +100,7 @@ export class NotesController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateNoteDto,
-  ): NoteResponse {
+  ): Promise<NoteResponse> {
     return this.notesService.update(request.user.id, id, dto);
   }
 
@@ -106,7 +109,7 @@ export class NotesController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: MoveNoteDto,
-  ): NoteResponse {
+  ): Promise<NoteResponse> {
     return this.notesService.move(request.user.id, id, dto);
   }
 
@@ -115,7 +118,7 @@ export class NotesController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateNoteTagsDto,
-  ): NoteResponse {
+  ): Promise<NoteResponse> {
     return this.notesService.updateTags(request.user.id, id, dto.tags);
   }
 
@@ -123,7 +126,7 @@ export class NotesController {
   listVersions(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): NoteVersionResponse[] {
+  ): Promise<NoteVersionResponse[]> {
     return this.notesService.listVersions(request.user.id, id);
   }
 
@@ -132,7 +135,7 @@ export class NotesController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Param('versionId', ParseIntPipe) versionId: number,
-  ): NoteResponse {
+  ): Promise<NoteResponse> {
     return this.notesService.restoreVersion(request.user.id, id, versionId);
   }
 
@@ -140,7 +143,7 @@ export class NotesController {
   restore(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): NoteResponse {
+  ): Promise<NoteResponse> {
     return this.notesService.restore(request.user.id, id);
   }
 
@@ -148,7 +151,7 @@ export class NotesController {
   permanentDelete(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): { id: number } {
+  ): Promise<{ id: number }> {
     return this.notesService.permanentDelete(request.user.id, id);
   }
 
@@ -156,7 +159,7 @@ export class NotesController {
   delete(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): { id: number } {
+  ): Promise<{ id: number }> {
     return this.notesService.delete(request.user.id, id);
   }
 }

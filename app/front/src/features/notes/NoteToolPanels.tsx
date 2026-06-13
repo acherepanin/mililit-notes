@@ -15,12 +15,13 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { notesApi, workspaceApi } from '../../api';
-import { useConfirmDelete } from '../../components/DeleteConfirmationProvider';
+import { useConfirmDelete } from '../../components/deleteConfirmation';
 import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import { TooltipText } from '../../components/TooltipText';
 import type { Translator } from '../../i18n';
 import type { Note, NoteDraft, NoteTemplate, NoteVersion, ShareLink } from '../../types';
+import { resolveApiErrorText } from '../../utils/apiErrors';
 
 interface PanelProps {
   t: Translator;
@@ -40,12 +41,13 @@ async function runTool(
   onError: (message: string) => void,
   successMessage: string,
   errorMessage: string,
+  t?: Translator,
 ) {
   try {
     await action();
     onSuccess(successMessage);
-  } catch {
-    onError(errorMessage);
+  } catch (caught) {
+    onError(t ? resolveApiErrorText(caught, t, errorMessage) : errorMessage);
   }
 }
 
@@ -74,7 +76,7 @@ export function TrashPanel({ t, onSelectNote, onRefreshTree, onSuccess, onError 
         <IconButton
           label={t('refresh')}
           icon={<RefreshCw size={16} />}
-          onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'))}
+          onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'), t)}
         />
       </div>
       <label className="search-box note-tool-search">
@@ -183,7 +185,7 @@ export function VersionsPanel({
           label={t('refresh')}
           icon={<RefreshCw size={16} />}
           disabled={!selectedNote}
-          onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'))}
+          onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'), t)}
         />
       </div>
       <div className="versions-list">
@@ -259,6 +261,7 @@ export function TemplatesPanel({
       onError,
       t('saved'),
       t('saveError'),
+      t,
     );
 
   useEffect(() => {
@@ -271,7 +274,7 @@ export function TemplatesPanel({
         <IconButton
           label={t('refresh')}
           icon={<RefreshCw size={16} />}
-          onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'))}
+          onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'), t)}
         />
         <IconButton
           label={t('saveAsTemplate')}
@@ -303,6 +306,7 @@ export function TemplatesPanel({
                     onError,
                     t('create'),
                     t('createError'),
+                    t,
                   )
                 }
               />
@@ -386,6 +390,7 @@ export function ShareLinksPanel({ t, selectedNote, onSuccess, onError }: PanelPr
       onError,
       t('copied'),
       t('saveError'),
+      t,
     );
 
   return (
@@ -395,7 +400,7 @@ export function ShareLinksPanel({ t, selectedNote, onSuccess, onError }: PanelPr
           label={t('refresh')}
           icon={<RefreshCw size={16} />}
           disabled={!selectedNote}
-          onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'))}
+          onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'), t)}
         />
         <IconButton
           label={t('includeSecrets')}

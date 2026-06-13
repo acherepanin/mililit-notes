@@ -4,6 +4,3 @@ public
 data
 uploads
 *.log
-*.sqlite
-*.sqlite-shm
-*.sqlite-wal

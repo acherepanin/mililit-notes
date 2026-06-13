@@ -17,7 +17,6 @@ import type {
   AdminUser,
   Attachment,
   AttachmentFolder,
-  AuthUser,
   MeUser,
   MonitoringPerformance,
   MonitoringRange,
@@ -48,6 +47,8 @@ import type {
   UserTheme,
 } from './types';
 
+// Bearer-токен в памяти модуля: подставляется в заголовок Authorization
+// всех запросов через setAuthToken.
 let authToken: string | null = null;
 
 export class ApiError extends Error {
@@ -109,6 +110,8 @@ export function setApiToken(token: string | null): void {
   authToken = token;
 }
 
+// Базовая обёртка над fetch: добавляет JSON-заголовки и токен,
+// нормализует ошибки backend в ApiError (с кодом и сообщением).
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: {

@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 
 import { authApi } from '../../api';
 import type { Translator } from '../../i18n';
+import { resolveApiError } from '../../utils/apiErrors';
 
 interface VerifyEmailPageProps {
   t: Translator;
@@ -13,6 +14,7 @@ export function VerifyEmailPage({ t }: VerifyEmailPageProps) {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token') ?? '';
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -23,8 +25,11 @@ export function VerifyEmailPage({ t }: VerifyEmailPageProps) {
     authApi
       .verifyEmail(token)
       .then(() => setStatus('success'))
-      .catch(() => setStatus('error'));
-  }, [token]);
+      .catch((caught: unknown) => {
+        setErrorDetail(resolveApiError(caught, t, 'verifyEmailErrorBody'));
+        setStatus('error');
+      });
+  }, [token, t]);
 
   return (
     <main className="auth-stage">
@@ -50,7 +55,7 @@ export function VerifyEmailPage({ t }: VerifyEmailPageProps) {
             <>
               <XCircle size={28} aria-hidden />
               <h1>{t('verifyEmailErrorTitle')}</h1>
-              <p>{t('verifyEmailErrorBody')}</p>
+              <p>{errorDetail ?? t('verifyEmailErrorBody')}</p>
               <Link className="auth-link auth-link--solo" to="/register">
                 {t('registerTitle')}
               </Link>

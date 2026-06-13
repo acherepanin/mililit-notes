@@ -3,7 +3,9 @@
 back/public
 back/data
 vm/data
-**/.env
+deploy/data
+# NOTE: env files (.env / .env.dev / .env.prod) are intentionally NOT ignored.
+# They are committed to git and baked into the production image.
 **/*.log
 **/*.tsbuildinfo
 **/vite.config.js

@@ -1,8 +1,11 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 
-import { DatabaseService } from '../infra/database.service';
+import { nowIso } from '../database/db.util';
+import { AiModelCatalogEntity } from '../database/entities/ai.entity';
 import { getAiModelPricing, type AiModelPricing } from './ai-pricing';
-import type { AiModelCatalogRow, AiModelResponse, AiModelSignal, AiModelTier } from './ai.types';
+import type { AiModelResponse, AiModelSignal, AiModelTier } from './ai.types';
 
 type ModelCatalogSignal = Partial<
   Pick<
@@ -97,12 +100,16 @@ export class AiModelCatalogService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AiModelCatalogService.name);
   private syncInterval: NodeJS.Timeout | null = null;
   private readonly signalCache = new Map<string, ModelCatalogSignal | null>();
-  private catalogRowsCache: AiModelCatalogRow[] | null = null;
+  private catalogRowsCache: AiModelCatalogEntity[] = [];
+  private catalogByModelId = new Map<string, ModelCatalogSignal>();
 
-  constructor(@Inject(DatabaseService) private readonly databaseService: DatabaseService) {}
+  constructor(
+    @InjectRepository(AiModelCatalogEntity)
+    private readonly catalogRepo: Repository<AiModelCatalogEntity>,
+  ) {}
 
-  onModuleInit(): void {
-    this.seedBuiltinCatalog();
+  async onModuleInit(): Promise<void> {
+    await this.seedBuiltinCatalog();
     this.syncInterval = setInterval(() => void this.syncFromConfiguredUrl(), catalogSyncIntervalMs);
     this.syncInterval.unref?.();
     void this.syncFromConfiguredUrl();
@@ -123,13 +130,9 @@ export class AiModelCatalogService implements OnModuleInit, OnModuleDestroy {
       return cached;
     }
 
-    const row =
-      (this.databaseService.connection
-        .prepare('SELECT * FROM ai_model_catalog WHERE model_id = ?')
-        .get(normalized) as AiModelCatalogRow | undefined) ??
-      this.findMatchingCatalogRow(normalized);
-
-    const signal = row ? this.mapRow(row) : null;
+    const exact = this.catalogByModelId.get(normalized) ?? null;
+    const matchedRow = exact ? null : this.findMatchingCatalogRow(normalized);
+    const signal = exact ?? (matchedRow ? this.mapRow(matchedRow) : null);
     this.signalCache.set(normalized, signal);
     return signal;
   }
@@ -195,117 +198,111 @@ export class AiModelCatalogService implements OnModuleInit, OnModuleDestroy {
       const payload = (await response.json()) as unknown;
       const entries = this.readRemoteEntries(payload);
       if (entries.length > 0) {
-        this.upsertEntries(entries, 'remote');
+        await this.upsertEntries(entries, 'remote');
       }
     } catch (caught) {
       this.logger.warn(`AI model catalog sync failed: ${(caught as Error).message}`);
     }
   }
 
-  private seedBuiltinCatalog(): void {
+  private async seedBuiltinCatalog(): Promise<void> {
     const entries = Object.entries(builtinCatalog).map(([modelId, signal]) => ({
       modelId,
       ...signal,
     }));
-    this.upsertEntries(entries, 'builtin');
+    await this.upsertEntries(entries, 'builtin');
   }
 
-  private upsertEntries(entries: CatalogEntryInput[], source: string): void {
-    const now = new Date().toISOString();
-    const statement = this.databaseService.connection.prepare(`
-      INSERT INTO ai_model_catalog
-        (model_id, label, tier, quality, speed, cost, score, speed_score, value_score, sort_rank,
-         input_price_per_1m, cached_input_price_per_1m, output_price_per_1m, capabilities,
-         is_deprecated, source, last_seen_at, created_at, updated_at)
-      VALUES
-        (@modelId, @label, @tier, @quality, @speed, @cost, @score, @speedScore, @valueScore,
-         @sortRank, @inputPricePer1M, @cachedInputPricePer1M, @outputPricePer1M, @capabilities,
-         @isDeprecated, @source, @now, @now, @now)
-      ON CONFLICT(model_id) DO UPDATE SET
-        label = COALESCE(excluded.label, ai_model_catalog.label),
-        tier = excluded.tier,
-        quality = excluded.quality,
-        speed = excluded.speed,
-        cost = excluded.cost,
-        score = excluded.score,
-        speed_score = excluded.speed_score,
-        value_score = excluded.value_score,
-        sort_rank = excluded.sort_rank,
-        input_price_per_1m = excluded.input_price_per_1m,
-        cached_input_price_per_1m = excluded.cached_input_price_per_1m,
-        output_price_per_1m = excluded.output_price_per_1m,
-        capabilities = excluded.capabilities,
-        is_deprecated = excluded.is_deprecated,
-        source = excluded.source,
-        last_seen_at = excluded.last_seen_at,
-        updated_at = excluded.updated_at
-    `);
-
-    const transaction = this.databaseService.connection.transaction(() => {
-      for (const entry of entries) {
-        const modelId = this.normalizeModelId(entry.modelId);
-        const pricing = getAiModelPricing(modelId);
-        statement.run({
-          modelId,
-          label: this.readString(entry.label) ?? modelId,
-          tier: entry.tier ?? 'unknown',
-          quality: entry.quality ?? 'unknown',
-          speed: entry.speed ?? 'unknown',
-          cost: entry.cost ?? 'unknown',
-          score: entry.score ?? 50,
-          speedScore: entry.speedScore ?? 50,
-          valueScore: entry.valueScore ?? 50,
-          sortRank: entry.sortRank ?? 0,
-          inputPricePer1M: this.readNumber(entry.inputPricePer1M) ?? pricing.inputPricePer1M,
-          cachedInputPricePer1M:
-            this.readNumber(entry.cachedInputPricePer1M) ?? pricing.cachedInputPricePer1M,
-          outputPricePer1M: this.readNumber(entry.outputPricePer1M) ?? pricing.outputPricePer1M,
-          capabilities: JSON.stringify(entry.capabilities ?? ['chat']),
-          isDeprecated: this.readBoolean(entry.deprecated) ? 1 : 0,
-          source,
-          now,
-        });
-      }
+  private async upsertEntries(entries: CatalogEntryInput[], source: string): Promise<void> {
+    const now = nowIso();
+    const values = entries.map((entry) => {
+      const modelId = this.normalizeModelId(entry.modelId);
+      const pricing = getAiModelPricing(modelId);
+      return {
+        model_id: modelId,
+        label: this.readString(entry.label) ?? modelId,
+        tier: entry.tier ?? 'unknown',
+        quality: entry.quality ?? 'unknown',
+        speed: entry.speed ?? 'unknown',
+        cost: entry.cost ?? 'unknown',
+        score: entry.score ?? 50,
+        speed_score: entry.speedScore ?? 50,
+        value_score: entry.valueScore ?? 50,
+        sort_rank: entry.sortRank ?? 0,
+        input_price_per_1m: this.readNumber(entry.inputPricePer1M) ?? pricing.inputPricePer1M,
+        cached_input_price_per_1m:
+          this.readNumber(entry.cachedInputPricePer1M) ?? pricing.cachedInputPricePer1M,
+        output_price_per_1m: this.readNumber(entry.outputPricePer1M) ?? pricing.outputPricePer1M,
+        capabilities: JSON.stringify(entry.capabilities ?? ['chat']),
+        is_deprecated: this.readBoolean(entry.deprecated) ? 1 : 0,
+        source,
+        last_seen_at: now,
+        created_at: now,
+        updated_at: now,
+      };
     });
 
-    transaction();
-    this.clearCache();
+    if (values.length === 0) {
+      return;
+    }
+
+    await this.catalogRepo
+      .createQueryBuilder()
+      .insert()
+      .into(AiModelCatalogEntity)
+      .values(values)
+      .orUpdate(
+        [
+          'label',
+          'tier',
+          'quality',
+          'speed',
+          'cost',
+          'score',
+          'speed_score',
+          'value_score',
+          'sort_rank',
+          'input_price_per_1m',
+          'cached_input_price_per_1m',
+          'output_price_per_1m',
+          'capabilities',
+          'is_deprecated',
+          'source',
+          'last_seen_at',
+          'updated_at',
+        ],
+        ['model_id'],
+      )
+      .execute();
+    await this.reloadCache();
   }
 
-  private findMatchingCatalogRow(modelId: string): AiModelCatalogRow | null {
+  private async reloadCache(): Promise<void> {
+    const rows = await this.catalogRepo.find();
+    this.catalogRowsCache = [...rows].sort((a, b) => b.model_id.length - a.model_id.length);
+    this.catalogByModelId = new Map(rows.map((row) => [row.model_id, this.mapRow(row)]));
+    this.signalCache.clear();
+  }
+
+  private findMatchingCatalogRow(modelId: string): AiModelCatalogEntity | null {
     return (
-      this.getCatalogRows().find((row) => this.isKnownModelMatch(modelId, row.model_id)) ?? null
+      this.catalogRowsCache.find((row) => this.isKnownModelMatch(modelId, row.model_id)) ?? null
     );
   }
 
-  private getCatalogRows(): AiModelCatalogRow[] {
-    if (!this.catalogRowsCache) {
-      this.catalogRowsCache = this.databaseService.connection
-        .prepare('SELECT * FROM ai_model_catalog ORDER BY length(model_id) DESC')
-        .all() as AiModelCatalogRow[];
-    }
-
-    return this.catalogRowsCache;
-  }
-
-  private clearCache(): void {
-    this.signalCache.clear();
-    this.catalogRowsCache = null;
-  }
-
-  private mapRow(row: AiModelCatalogRow): ModelCatalogSignal {
+  private mapRow(row: AiModelCatalogEntity): ModelCatalogSignal {
     return {
-      tier: row.tier,
-      quality: row.quality,
-      speed: row.speed,
-      cost: row.cost,
+      tier: row.tier as AiModelTier,
+      quality: row.quality as AiModelSignal,
+      speed: row.speed as AiModelSignal,
+      cost: row.cost as AiModelSignal,
       score: row.score,
       speedScore: row.speed_score,
       valueScore: row.value_score,
       sortRank: row.sort_rank,
-      inputPricePer1M: row.input_price_per_1m,
-      cachedInputPricePer1M: row.cached_input_price_per_1m,
-      outputPricePer1M: row.output_price_per_1m,
+      inputPricePer1M: row.input_price_per_1m ?? undefined,
+      cachedInputPricePer1M: row.cached_input_price_per_1m ?? undefined,
+      outputPricePer1M: row.output_price_per_1m ?? undefined,
       capabilities: this.parseCapabilities(row.capabilities),
     };
   }

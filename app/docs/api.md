@@ -85,7 +85,7 @@ cURL:
 ```bash
 curl -s -X POST "$BASE_URL/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}'
+  -d '{"username":"admin","password":"adm136479"}'
 ```
 
 Сохранить token:
@@ -93,7 +93,7 @@ curl -s -X POST "$BASE_URL/auth/login" \
 ```bash
 TOKEN=$(curl -s -X POST "$BASE_URL/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}' \
+  -d '{"username":"admin","password":"adm136479"}' \
   | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).token")
 ```
 
@@ -457,18 +457,18 @@ curl -s -X DELETE "$BASE_URL/notes/1/permanent" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### GET `/api/notes/search?q=sqlite`
+### GET `/api/notes/search?q=postgres`
 
 Полнотекстовый поиск по названию, тексту и тегам.
 
 ```bash
-curl -s "$BASE_URL/notes/search?q=sqlite" \
+curl -s "$BASE_URL/notes/search?q=postgres" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 ### POST `/api/notes/search/reindex`
 
-Пересобирает FTS5 индекс заметок текущего пользователя.
+Пересобирает полнотекстовый поисковый индекс заметок текущего пользователя.
 
 ```bash
 curl -s -X POST "$BASE_URL/notes/search/reindex" \
@@ -537,7 +537,7 @@ curl -s -X PATCH "$BASE_URL/notes/tags/1" \
 
 ```json
 {
-  "tags": ["devops", "sqlite"]
+  "tags": ["devops", "postgres"]
 }
 ```
 
@@ -545,7 +545,7 @@ curl -s -X PATCH "$BASE_URL/notes/tags/1" \
 curl -s -X PATCH "$BASE_URL/notes/1/tags" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"tags":["devops","sqlite"]}'
+  -d '{"tags":["devops","postgres"]}'
 ```
 
 ### GET `/api/notes/:id/versions`
@@ -656,7 +656,7 @@ curl -s -X DELETE "$BASE_URL/attachments/1" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Attachments belong to the current account. `noteId` is optional: `POST /attachments` uploads an account file without a note, while `POST /notes/:id/attachments` uploads and attaches the file to a note immediately. `PATCH /attachments/:id/note` attaches a file to another note or detaches it with `noteId: null`. Files are stored on disk in `UPLOAD_DIR`; SQLite stores only metadata and `storage_path`. JSON body limit is 30 MB, while file validation is controlled by `MAX_UPLOAD_SIZE_MB`. `GET /notes/:id/attachments/archive` builds a ZIP archive for one note; `GET /attachments/archive` builds an account-level ZIP. Optional `ids=1,2,3` limits the archive to selected files. Permanent note deletion detaches files instead of deleting them. Physical files are deleted only when the attachment itself is deleted or when an admin deletes the user account.
+Attachments belong to the current account. `noteId` is optional: `POST /attachments` uploads an account file without a note, while `POST /notes/:id/attachments` uploads and attaches the file to a note immediately. `PATCH /attachments/:id/note` attaches a file to another note or detaches it with `noteId: null`. Files are stored on disk in `UPLOAD_DIR`; the database stores only metadata and `storage_path`. JSON body limit is 30 MB, while file validation is controlled by `MAX_UPLOAD_SIZE_MB`. `GET /notes/:id/attachments/archive` builds a ZIP archive for one note; `GET /attachments/archive` builds an account-level ZIP. Optional `ids=1,2,3` limits the archive to selected files. Permanent note deletion detaches files instead of deleting them. Physical files are deleted only when the attachment itself is deleted or when an admin deletes the user account.
 
 ### Share Links
 
@@ -944,7 +944,7 @@ curl -s -X POST "$BASE_URL/ai/actions/execute" \
 - `admin.stats.read`, только для роли `admin`.
 
 Readonly `notes.read` возвращает модели не только метаданные, но и `contentText` заметки до 6000 символов, чтобы следующие ответы и мутации могли опираться на фактическое содержимое.
-Readonly `notes.semanticSearch` принимает `query` и optional `limit`, строит embeddings через текущий provider `POST <baseUrl>/embeddings`, кэширует векторы в SQLite и возвращает результаты с `score`/`matchType`. Если provider не поддерживает embeddings или вернул ошибку, backend возвращает fallback-результаты обычного `notes.search`.
+Readonly `notes.semanticSearch` принимает `query` и optional `limit`, строит embeddings через текущий provider `POST <baseUrl>/embeddings`, кэширует векторы в БД и возвращает результаты с `score`/`matchType`. Если provider не поддерживает embeddings или вернул ошибку, backend возвращает fallback-результаты обычного `notes.search`.
 Mutation `notes.create` принимает optional `parentId`. Если `parentId` передан, заметка создается дочерней внутри существующей заметки текущего пользователя. Родительская заметка может одновременно хранить собственный текст и иметь дочерние заметки; отдельной сущности “папка” нет.
 Mutation `notes.createNestedBatch` создает повторяемую вложенную структуру в одном действии. Payload: `scope` (`allActiveNotes`, `parentIds` или `recentNamedNotes`), `parentIds` для точечного режима, `parentNames`/`expectedParentCount`/`recentWithinMinutes` для выбора последних созданных заметок по имени, `childCount`, `nestedChildCount`, optional `childNamePattern`/`nestedNamePattern` с плейсхолдерами `{index}` и `{parent}`. Для `allActiveNotes` backend берет снимок активных заметок до создания новых записей, поэтому новые дочерние заметки не становятся родителями в том же batch. Для продолжения предыдущего batch вида “внутри каждой из новых двух заметок” Notes AI использует `recentNamedNotes`, например `parentNames=["Вложение 1","Вложение 2"]` и `expectedParentCount=20`.
 Mutation `attachments.attachToNote` принимает `attachmentId` и optional `noteId`: если `noteId` передан, существующий файл аккаунта привязывается к заметке текущего пользователя; если `noteId` опущен или `null`, файл отвязывается от заметок. Backend проверяет ownership файла и заметки через `WorkspaceService`.
@@ -1069,7 +1069,7 @@ curl -s -X POST "$BASE_URL/ai/bots/link-code" \
 curl -s -X POST "$BASE_URL/ai/bots/telegram/webhook" \
   -H "Content-Type: application/json" \
   -H "X-Telegram-Bot-Api-Secret-Token: webhook-secret" \
-  -d '{"message":{"chat":{"id":123},"from":{"id":123,"username":"user"},"text":"найди заметки про sqlite"}}'
+  -d '{"message":{"chat":{"id":123},"from":{"id":123,"username":"user"},"text":"найди заметки про postgres"}}'
 ```
 
 ### POST `/api/ai/bots/vk/webhook`
@@ -1398,7 +1398,7 @@ BASE_URL=http://localhost:3000/api
 
 TOKEN=$(curl -s -X POST "$BASE_URL/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"admin"}' \
+  -d '{"username":"admin","password":"adm136479"}' \
   | node -pe "JSON.parse(require('fs').readFileSync(0, 'utf8')).token")
 
 curl -s "$BASE_URL/me" -H "Authorization: Bearer $TOKEN"

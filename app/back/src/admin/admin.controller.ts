@@ -26,12 +26,15 @@ export class AdminController {
   constructor(@Inject(AdminService) private readonly adminService: AdminService) {}
 
   @Get('users')
-  listUsers(): AdminUserResponse[] {
+  listUsers(): Promise<AdminUserResponse[]> {
     return this.adminService.listUsers();
   }
 
   @Post('users')
-  createUser(@Req() request: AuthenticatedRequest, @Body() dto: CreateUserDto): AdminUserResponse {
+  createUser(
+    @Req() request: AuthenticatedRequest,
+    @Body() dto: CreateUserDto,
+  ): Promise<AdminUserResponse> {
     return this.adminService.createUser(request.user.id, dto);
   }
 
@@ -40,7 +43,7 @@ export class AdminController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateUserDto,
-  ): AdminUserResponse {
+  ): Promise<AdminUserResponse> {
     return this.adminService.updateUser(request.user.id, id, dto);
   }
 
@@ -48,12 +51,12 @@ export class AdminController {
   deleteUser(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): { id: number } {
+  ): Promise<{ id: number }> {
     return this.adminService.deleteUser(request.user.id, id);
   }
 
   @Get('stats')
-  getStats(@Query('range') range?: string): AdminStatsResponse {
+  getStats(@Query('range') range?: string): Promise<AdminStatsResponse> {
     return this.adminService.getStats(range);
   }
 }

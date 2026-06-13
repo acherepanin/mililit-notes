@@ -1,8 +1,11 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'node:crypto';
+import { DataSource, Repository } from 'typeorm';
 
-import { DatabaseService } from '../infra/database.service';
 import { redactSecretText } from '../common/secret-redaction.util';
+import { nowIso } from '../database/db.util';
+import { AiNoteEmbeddingEntity, AiUsageLogEntity } from '../database/entities/ai.entity';
 import { NotesService } from '../notes/notes.service';
 import type { NoteSearchResult } from '../notes/notes.types';
 import { AiCryptoService } from './ai-crypto.service';
@@ -62,7 +65,11 @@ export class AiEmbeddingsService {
   private readonly logger = new Logger(AiEmbeddingsService.name);
 
   constructor(
-    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @InjectRepository(AiNoteEmbeddingEntity)
+    private readonly embeddingsRepo: Repository<AiNoteEmbeddingEntity>,
+    @InjectRepository(AiUsageLogEntity)
+    private readonly usageRepo: Repository<AiUsageLogEntity>,
+    @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(AiCryptoService) private readonly aiCryptoService: AiCryptoService,
     @Inject(NotesService) private readonly notesService: NotesService,
   ) {}
@@ -82,10 +89,10 @@ export class AiEmbeddingsService {
       return await this.searchWithEmbeddings(userId, normalizedQuery, limit, allowReadSecrets);
     } catch (caught) {
       this.logger.warn(`Semantic search fallback for user ${userId}: ${(caught as Error).message}`);
-      return this.notesService
-        .search(userId, normalizedQuery)
+      const fallback = await this.notesService.search(userId, normalizedQuery);
+      return fallback
         .slice(0, limit)
-        .map((result) => ({ ...result, score: 0, matchType: 'text' }));
+        .map((result) => ({ ...result, score: 0, matchType: 'text' as const }));
     }
   }
 
@@ -95,15 +102,19 @@ export class AiEmbeddingsService {
     limit: number,
     allowReadSecrets: boolean,
   ): Promise<SemanticSearchResult[]> {
-    const settings = this.getSettings(userId);
+    const settings = await this.getSettings(userId);
     const apiKey = this.aiCryptoService.decrypt(settings.api_key_encrypted);
     const model = this.selectEmbeddingModel(settings.model);
 
     if (!apiKey) {
-      throw new BadRequestException('AI API key is not configured or cannot be decrypted');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI API key is not configured or cannot be decrypted',
+        code: 'AI_KEY_MISSING',
+      });
     }
 
-    const candidates = this.listCandidates(userId, allowReadSecrets);
+    const candidates = await this.listCandidates(userId, allowReadSecrets);
     if (candidates.length === 0) {
       return [];
     }
@@ -135,28 +146,32 @@ export class AiEmbeddingsService {
       }));
   }
 
-  private getSettings(userId: number): AiEmbeddingSettingsRow {
-    const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT user_settings.user_id,
-                 user_settings.provider_name,
-                 user_settings.base_url,
-                 provider_settings.model,
-                 provider_settings.api_key_encrypted
-          FROM ai_user_settings user_settings
-          JOIN ai_provider_settings provider_settings
-            ON provider_settings.user_id = user_settings.user_id
-           AND provider_settings.provider_name = user_settings.provider_name
-           AND provider_settings.base_url = user_settings.base_url
-          WHERE user_settings.user_id = @userId
-          LIMIT 1
-        `,
-      )
-      .get({ userId }) as AiEmbeddingSettingsRow | undefined;
+  private async getSettings(userId: number): Promise<AiEmbeddingSettingsRow> {
+    const rows = (await this.dataSource.query(
+      `
+        SELECT user_settings.user_id,
+               user_settings.provider_name,
+               user_settings.base_url,
+               provider_settings.model,
+               provider_settings.api_key_encrypted
+        FROM ai_user_settings user_settings
+        JOIN ai_provider_settings provider_settings
+          ON provider_settings.user_id = user_settings.user_id
+         AND provider_settings.provider_name = user_settings.provider_name
+         AND provider_settings.base_url = user_settings.base_url
+        WHERE user_settings.user_id = $1
+        LIMIT 1
+      `,
+      [userId],
+    )) as AiEmbeddingSettingsRow[];
 
+    const row = rows[0];
     if (!row) {
-      throw new BadRequestException('AI settings are not configured');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI settings are not configured',
+        code: 'AI_NOT_CONFIGURED',
+      });
     }
 
     return row;
@@ -169,26 +184,28 @@ export class AiEmbeddingsService {
       : defaultEmbeddingModel;
   }
 
-  private listCandidates(userId: number, allowReadSecrets: boolean): EmbeddingCandidate[] {
-    const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT notes.id,
-                 notes.name,
-                 notes.content_text as contentText,
-                 notes.updated_at as updatedAt,
-                 COALESCE(group_concat(lower(tags.name), ' '), '') as tags
-          FROM notes
-          LEFT JOIN note_tags ON note_tags.note_id = notes.id
-          LEFT JOIN tags ON tags.id = note_tags.tag_id
-          WHERE notes.user_id = @userId
-            AND notes.deleted_at IS NULL
-          GROUP BY notes.id
-          ORDER BY notes.updated_at DESC, notes.id DESC
-          LIMIT @limit
-        `,
-      )
-      .all({ userId, limit: maxSemanticNotes }) as EmbeddingCandidate[];
+  private async listCandidates(
+    userId: number,
+    allowReadSecrets: boolean,
+  ): Promise<EmbeddingCandidate[]> {
+    const rows = (await this.dataSource.query(
+      `
+        SELECT notes.id,
+               notes.name,
+               notes.content_text as "contentText",
+               notes.updated_at as "updatedAt",
+               COALESCE(string_agg(lower(tags.name), ' '), '') as tags
+        FROM notes
+        LEFT JOIN note_tags ON note_tags.note_id = notes.id
+        LEFT JOIN tags ON tags.id = note_tags.tag_id
+        WHERE notes.user_id = $1
+          AND notes.deleted_at IS NULL
+        GROUP BY notes.id
+        ORDER BY notes.updated_at DESC, notes.id DESC
+        LIMIT $2
+      `,
+      [userId, maxSemanticNotes],
+    )) as EmbeddingCandidate[];
 
     return rows.map((row) => ({
       ...row,
@@ -218,7 +235,7 @@ export class AiEmbeddingsService {
     model: string,
     records: EmbeddingRecord[],
   ): Promise<void> {
-    const existing = this.getExistingEmbeddings(settings, model, records);
+    const existing = await this.getExistingEmbeddings(settings, model, records);
     const missing: EmbeddingRecord[] = [];
 
     for (const record of records) {
@@ -243,79 +260,71 @@ export class AiEmbeddingsService {
       batch.forEach((record, recordIndex) => {
         record.vector = vectors[recordIndex] ?? null;
       });
-      this.upsertEmbeddings(settings, model, batch);
+      await this.upsertEmbeddings(settings, model, batch);
     }
   }
 
-  private getExistingEmbeddings(
+  private async getExistingEmbeddings(
     settings: AiEmbeddingSettingsRow,
     model: string,
     records: EmbeddingRecord[],
-  ): Map<number, EmbeddingRow> {
+  ): Promise<Map<number, EmbeddingRow>> {
     if (records.length === 0) {
       return new Map();
     }
 
-    const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT note_id, content_hash, vector_json
-          FROM ai_note_embeddings
-          WHERE user_id = @userId
-            AND provider_name = @providerName
-            AND base_url = @baseUrl
-            AND model = @model
-        `,
-      )
-      .all({
-        userId: settings.user_id,
-        providerName: settings.provider_name,
-        baseUrl: settings.base_url,
+    const rows = await this.embeddingsRepo.find({
+      where: {
+        user_id: settings.user_id,
+        provider_name: settings.provider_name,
+        base_url: settings.base_url,
         model,
-      }) as EmbeddingRow[];
+      },
+      select: { note_id: true, content_hash: true, vector_json: true },
+    });
 
-    return new Map(rows.map((row) => [row.note_id, row]));
+    return new Map(
+      rows.map((row) => [
+        row.note_id,
+        { note_id: row.note_id, content_hash: row.content_hash, vector_json: row.vector_json },
+      ]),
+    );
   }
 
-  private upsertEmbeddings(
+  private async upsertEmbeddings(
     settings: AiEmbeddingSettingsRow,
     model: string,
     records: EmbeddingRecord[],
-  ): void {
-    const now = new Date().toISOString();
-    const statement = this.databaseService.connection.prepare(
-      `
-        INSERT INTO ai_note_embeddings
-          (user_id, note_id, provider_name, base_url, model, content_hash, vector_json, created_at, updated_at)
-        VALUES
-          (@userId, @noteId, @providerName, @baseUrl, @model, @contentHash, @vectorJson, @now, @now)
-        ON CONFLICT(user_id, note_id, provider_name, base_url, model) DO UPDATE SET
-          content_hash = excluded.content_hash,
-          vector_json = excluded.vector_json,
-          updated_at = excluded.updated_at
-      `,
-    );
+  ): Promise<void> {
+    const now = nowIso();
+    const values = records
+      .filter((record) => record.vector)
+      .map((record) => ({
+        user_id: settings.user_id,
+        note_id: record.id,
+        provider_name: settings.provider_name,
+        base_url: settings.base_url,
+        model,
+        content_hash: record.contentHash,
+        vector_json: JSON.stringify(record.vector),
+        created_at: now,
+        updated_at: now,
+      }));
 
-    const transaction = this.databaseService.connection.transaction(() => {
-      for (const record of records) {
-        if (!record.vector) {
-          continue;
-        }
+    if (values.length === 0) {
+      return;
+    }
 
-        statement.run({
-          userId: settings.user_id,
-          noteId: record.id,
-          providerName: settings.provider_name,
-          baseUrl: settings.base_url,
-          model,
-          contentHash: record.contentHash,
-          vectorJson: JSON.stringify(record.vector),
-          now,
-        });
-      }
-    });
-
-    transaction();
+    await this.embeddingsRepo
+      .createQueryBuilder()
+      .insert()
+      .into(AiNoteEmbeddingEntity)
+      .values(values)
+      .orUpdate(
+        ['content_hash', 'vector_json', 'updated_at'],
+        ['user_id', 'note_id', 'provider_name', 'base_url', 'model'],
+      )
+      .execute();
   }
 
   private async fetchEmbeddings(
@@ -339,7 +348,7 @@ export class AiEmbeddingsService {
     }
 
     const payload = (await response.json()) as EmbeddingsResponse;
-    this.recordEmbeddingUsage(settings, model, payload, inputs);
+    await this.recordEmbeddingUsage(settings, model, payload, inputs);
 
     const vectors = new Array<number[]>(inputs.length);
     for (const [fallbackIndex, item] of (payload.data ?? []).entries()) {
@@ -359,31 +368,25 @@ export class AiEmbeddingsService {
     return vectors;
   }
 
-  private recordEmbeddingUsage(
+  private async recordEmbeddingUsage(
     settings: AiEmbeddingSettingsRow,
     model: string,
     payload: EmbeddingsResponse,
     inputs: string[],
-  ): void {
+  ): Promise<void> {
     const inputTokens =
       this.readTokenUsage(payload.usage?.prompt_tokens) ??
       this.readTokenUsage(payload.usage?.total_tokens) ??
       this.estimateTokens(inputs.join('\n'));
 
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO ai_usage_logs (user_id, provider_name, model, input_tokens, output_tokens, created_at)
-          VALUES (@userId, @providerName, @model, @inputTokens, 0, @createdAt)
-        `,
-      )
-      .run({
-        userId: settings.user_id,
-        providerName: settings.provider_name,
-        model,
-        inputTokens,
-        createdAt: new Date().toISOString(),
-      });
+    await this.usageRepo.insert({
+      user_id: settings.user_id,
+      provider_name: settings.provider_name,
+      model,
+      input_tokens: inputTokens,
+      output_tokens: 0,
+      created_at: nowIso(),
+    });
   }
 
   private parseEmbedding(value: unknown): number[] | null {

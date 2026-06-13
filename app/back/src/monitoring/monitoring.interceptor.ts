@@ -41,16 +41,18 @@ export class MonitoringInterceptor implements NestInterceptor {
 
       if (error) {
         const { message, errorName, errorBody } = this.extractErrorDetails(error, statusCode);
-        this.requestErrorLogService.record({
-          userId: request.user?.id ?? null,
-          method,
-          path,
-          statusCode,
-          message,
-          errorName,
-          errorBody,
-          durationMs,
-        });
+        void this.requestErrorLogService
+          .record({
+            userId: request.user?.id ?? null,
+            method,
+            path,
+            statusCode,
+            message,
+            errorName,
+            errorBody,
+            durationMs,
+          })
+          .catch(() => undefined);
       }
     };
 

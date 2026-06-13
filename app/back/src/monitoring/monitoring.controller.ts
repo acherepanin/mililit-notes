@@ -15,7 +15,7 @@ export class MonitoringController {
   constructor(@Inject(MonitoringService) private readonly monitoringService: MonitoringService) {}
 
   @Get('actions')
-  listActions(@Query('limit') limit?: string): ActivityResponse[] {
+  listActions(@Query('limit') limit?: string): Promise<ActivityResponse[]> {
     const parsed = limit !== undefined ? Number(limit) : undefined;
     return this.monitoringService.listActions(
       parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined,
@@ -23,7 +23,7 @@ export class MonitoringController {
   }
 
   @Get('subscriptions')
-  listSubscriptions(@Query('limit') limit?: string): SubscriptionLogResponse[] {
+  listSubscriptions(@Query('limit') limit?: string): Promise<SubscriptionLogResponse[]> {
     const parsed = limit !== undefined ? Number(limit) : undefined;
     return this.monitoringService.listSubscriptionLogs(
       parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined,
@@ -31,7 +31,7 @@ export class MonitoringController {
   }
 
   @Get('errors')
-  listErrors(@Query('limit') limit?: string): RequestErrorResponse[] {
+  listErrors(@Query('limit') limit?: string): Promise<RequestErrorResponse[]> {
     const parsed = limit !== undefined ? Number(limit) : undefined;
     return this.monitoringService.listErrors(
       parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined,

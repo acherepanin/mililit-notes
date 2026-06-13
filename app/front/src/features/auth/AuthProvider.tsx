@@ -1,16 +1,9 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { authApi, setApiToken } from '../../api';
 import { parseUserTheme } from '../../themes';
-import type { MeUser, RegistrationPendingResponse, UserLanguage, UserTheme } from '../../types';
+import type { MeUser, UserLanguage, UserTheme } from '../../types';
+import { AuthContext } from './authContext';
 
 function normalizeUser(user: MeUser): MeUser {
   return {
@@ -28,25 +21,6 @@ function normalizeUser(user: MeUser): MeUser {
 }
 
 const tokenStorageKey = 'notes.auth.token';
-
-type AuthContextValue = {
-  token: string | null;
-  user: MeUser | null;
-  isChecking: boolean;
-  login: (username: string, password: string) => Promise<MeUser>;
-  register: (payload: {
-    username: string;
-    password: string;
-    email: string;
-    firstName?: string;
-    lastName?: string;
-  }) => Promise<RegistrationPendingResponse>;
-  logout: () => void;
-  refreshMe: () => Promise<MeUser>;
-  updatePreferences: (payload: { language?: UserLanguage; theme?: UserTheme }) => Promise<MeUser>;
-};
-
-const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(tokenStorageKey));
@@ -136,12 +110,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth(): AuthContextValue {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within AuthProvider');
-  }
-  return context;
 }

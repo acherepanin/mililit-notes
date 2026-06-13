@@ -2,6 +2,7 @@ import { Body, Controller, Get, Inject, Param, ParseIntPipe, Post, Req } from '@
 
 import { type AuthenticatedRequest } from '../auth/auth.guard';
 import { CheckoutDto } from './dto/checkout.dto';
+import { SubscriptionPlansService } from './subscription-plans.service';
 import { SubscriptionsService } from './subscriptions.service';
 import type {
   MeSubscriptionBundle,
@@ -12,15 +13,18 @@ import type {
 
 @Controller()
 export class SubscriptionsController {
-  constructor(@Inject(SubscriptionsService) private readonly subscriptionsService: SubscriptionsService) {}
+  constructor(
+    @Inject(SubscriptionsService) private readonly subscriptionsService: SubscriptionsService,
+    @Inject(SubscriptionPlansService) private readonly plansService: SubscriptionPlansService,
+  ) {}
 
   @Get('subscription-plans')
-  listPlans(): SubscriptionPlanResponse[] {
-    return this.subscriptionsService.listActivePlans();
+  listPlans(): Promise<SubscriptionPlanResponse[]> {
+    return this.plansService.listActivePlans();
   }
 
   @Get('me/subscription')
-  getMySubscription(@Req() request: AuthenticatedRequest): MeSubscriptionBundle {
+  getMySubscription(@Req() request: AuthenticatedRequest): Promise<MeSubscriptionBundle> {
     return this.subscriptionsService.getMeSubscriptionBundle(request.user.id);
   }
 
@@ -28,7 +32,7 @@ export class SubscriptionsController {
   checkout(
     @Req() request: AuthenticatedRequest,
     @Body() dto: CheckoutDto,
-  ): SubscriptionOrderResponse {
+  ): Promise<SubscriptionOrderResponse> {
     return this.subscriptionsService.createCheckout(request.user.id, dto);
   }
 
@@ -36,7 +40,7 @@ export class SubscriptionsController {
   confirmCheckout(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): UserSubscriptionResponse {
+  ): Promise<UserSubscriptionResponse> {
     return this.subscriptionsService.confirmMockCheckout(request.user.id, id);
   }
 }

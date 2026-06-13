@@ -1,8 +1,11 @@
 import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { basename } from 'node:path';
+import { DataSource, LessThanOrEqual, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
-import { DatabaseService } from '../infra/database.service';
+import { nowIso } from '../database/db.util';
+import { AiBotPendingActionEntity, AiBotUsageLogEntity } from '../database/entities/ai-bot.entity';
 import { AiBotSettingsService } from './ai-bot-settings.service';
 import { AiCryptoService } from './ai-crypto.service';
 import { AiService } from './ai.service';
@@ -98,7 +101,11 @@ export class AiBotRuntimeService {
   private readonly logger = new Logger(AiBotRuntimeService.name);
 
   constructor(
-    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @InjectRepository(AiBotPendingActionEntity)
+    private readonly pendingActionsRepo: Repository<AiBotPendingActionEntity>,
+    @InjectRepository(AiBotUsageLogEntity)
+    private readonly usageLogsRepo: Repository<AiBotUsageLogEntity>,
+    @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(AiService) private readonly aiService: AiService,
     @Inject(AiCryptoService) private readonly aiCryptoService: AiCryptoService,
     @Inject(AiBotSettingsService) private readonly aiBotSettingsService: AiBotSettingsService,
@@ -109,7 +116,7 @@ export class AiBotRuntimeService {
     payload: TelegramWebhookPayload,
     secretToken: string | undefined,
   ): Promise<{ ok: true }> {
-    const settings = this.getEnabledAdminSettings('telegram');
+    const settings = await this.getEnabledAdminSettings('telegram');
     this.verifyTelegramSecret(settings, secretToken);
     const message = this.parseTelegramMessage(payload);
 
@@ -121,7 +128,7 @@ export class AiBotRuntimeService {
   }
 
   async handleVkWebhook(payload: VkWebhookPayload): Promise<string> {
-    const settings = this.getEnabledAdminSettings('vk');
+    const settings = await this.getEnabledAdminSettings('vk');
 
     if (payload.type === 'confirmation') {
       return settings.confirmation_code ?? '';
@@ -146,7 +153,7 @@ export class AiBotRuntimeService {
       const linkCode = this.readLinkCode(rawText);
 
       if (linkCode) {
-        this.aiBotSettingsService.linkExternalAccount(
+        await this.aiBotSettingsService.linkExternalAccount(
           message.provider,
           linkCode,
           message.externalId,
@@ -160,7 +167,7 @@ export class AiBotRuntimeService {
         return;
       }
 
-      const userSettings = this.aiBotSettingsService.getLinkedUserSettings(
+      const userSettings = await this.aiBotSettingsService.getLinkedUserSettings(
         message.provider,
         message.externalId,
       );
@@ -181,7 +188,7 @@ export class AiBotRuntimeService {
         return;
       }
 
-      this.enforceBotUsageLimit(userSettings, adminSettings, 'message', 1);
+      await this.enforceBotUsageLimit(userSettings, adminSettings, 'message', 1);
       const commandText = await this.resolveIncomingText(adminSettings, userSettings, message);
       const voiceConfirmation = rawText ? undefined : this.readConfirmation(commandText);
 
@@ -192,8 +199,8 @@ export class AiBotRuntimeService {
           message.chatId,
           voiceConfirmation,
         );
-        this.recordBotUsage(userSettings, 'message', 1, null);
-        this.recordMessageActivity(userSettings, message, commandText.length);
+        await this.recordBotUsage(userSettings, 'message', 1, null);
+        await this.recordMessageActivity(userSettings, message, commandText.length);
         return;
       }
 
@@ -201,24 +208,29 @@ export class AiBotRuntimeService {
         userSettings.user_id,
         { message: commandText, history: [] },
         {
-          allowedToolNames: this.createAllowedToolSet(userSettings),
+          allowedToolNames: await this.createAllowedToolSet(userSettings),
           allowReadSecretsOverride:
             Boolean(adminSettings.allow_secrets) && Boolean(userSettings.allow_secrets),
           // Bot runtime owns messenger confirmations and write-limit checks.
           requireActionConfirmationOverride: true,
         },
       );
-      this.enforceAndRecordToolUsage(userSettings, adminSettings, response.toolCalls ?? []);
+      await this.enforceAndRecordToolUsage(userSettings, adminSettings, response.toolCalls ?? []);
 
       if (response.actions?.length) {
-        this.enforceBotUsageLimit(userSettings, adminSettings, 'write', response.actions.length);
+        await this.enforceBotUsageLimit(
+          userSettings,
+          adminSettings,
+          'write',
+          response.actions.length,
+        );
         await this.handleBotActions(adminSettings, userSettings, message.chatId, response.actions);
       } else {
         await this.sendMessage(adminSettings, message.chatId, response.message.content);
       }
 
-      this.recordBotUsage(userSettings, 'message', 1, null);
-      this.recordMessageActivity(userSettings, message, commandText.length);
+      await this.recordBotUsage(userSettings, 'message', 1, null);
+      await this.recordMessageActivity(userSettings, message, commandText.length);
     } catch (caught) {
       this.logger.warn(
         `${message.provider} bot message failed for ${message.externalId}: ${(caught as Error).message}`,
@@ -265,15 +277,17 @@ export class AiBotRuntimeService {
       return;
     }
 
-    this.assertBotActionsAllowed(userSettings, actions);
+    await this.assertBotActionsAllowed(userSettings, actions);
 
-    const allowedToolNames = this.createAllowedToolSet(userSettings);
+    const allowedToolNames = await this.createAllowedToolSet(userSettings);
 
     if (!adminSettings.require_confirmation) {
-      const results = actions.map((action) =>
-        this.aiService.executeAction(userSettings.user_id, action, { allowedToolNames }),
+      const results = await Promise.all(
+        actions.map((action) =>
+          this.aiService.executeAction(userSettings.user_id, action, { allowedToolNames }),
+        ),
       );
-      this.recordBotUsage(
+      await this.recordBotUsage(
         userSettings,
         'write',
         actions.length,
@@ -287,7 +301,10 @@ export class AiBotRuntimeService {
       return;
     }
 
-    const pendingIds = actions.map((action) => this.createPendingAction(userSettings, action));
+    const pendingIds: number[] = [];
+    for (const action of actions) {
+      pendingIds.push(await this.createPendingAction(userSettings, action));
+    }
     const text = actions
       .map((action, index) =>
         [
@@ -312,7 +329,7 @@ export class AiBotRuntimeService {
       return;
     }
 
-    const pending = this.getPendingAction(userSettings, pendingId);
+    const pending = await this.getPendingAction(userSettings, pendingId);
 
     if (!pending) {
       await this.sendMessage(
@@ -324,8 +341,8 @@ export class AiBotRuntimeService {
     }
 
     const payload = this.parsePendingPayload(pending.action_payload);
-    this.enforceBotUsageLimit(userSettings, adminSettings, 'write', 1);
-    this.assertBotActionsAllowed(userSettings, [
+    await this.enforceBotUsageLimit(userSettings, adminSettings, 'write', 1);
+    await this.assertBotActionsAllowed(userSettings, [
       {
         name: pending.action_name,
         title: pending.action_name,
@@ -334,101 +351,78 @@ export class AiBotRuntimeService {
       },
     ]);
 
-    const response = this.aiService.executeAction(
+    const response = await this.aiService.executeAction(
       userSettings.user_id,
       {
         name: pending.action_name,
         payload,
       },
       {
-        allowedToolNames: this.createAllowedToolSet(userSettings),
+        allowedToolNames: await this.createAllowedToolSet(userSettings),
       },
     );
-    this.databaseService.connection
-      .prepare('DELETE FROM ai_bot_pending_actions WHERE id = ?')
-      .run(pending.id);
-    this.recordBotUsage(userSettings, 'write', 1, pending.action_name);
+    await this.pendingActionsRepo.delete({ id: pending.id });
+    await this.recordBotUsage(userSettings, 'write', 1, pending.action_name);
     await this.sendMessage(adminSettings, chatId, response.message.content);
   }
 
-  private createPendingAction(userSettings: AiBotUserSettingsRow, action: AiToolAction): number {
+  private async createPendingAction(
+    userSettings: AiBotUserSettingsRow,
+    action: AiToolAction,
+  ): Promise<number> {
     const expiresAt = new Date(Date.now() + pendingActionTtlMs).toISOString();
     if (!userSettings.linked_external_id) {
       throw new BadRequestException('Bot account is not linked');
     }
 
-    const result = this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO ai_bot_pending_actions
-            (user_id, provider, external_id, action_name, action_payload, expires_at, created_at)
-          VALUES (@userId, @provider, @externalId, @actionName, @actionPayload, @expiresAt, @now)
-        `,
-      )
-      .run({
-        userId: userSettings.user_id,
-        provider: userSettings.provider,
-        externalId: userSettings.linked_external_id,
-        actionName: action.name,
-        actionPayload: JSON.stringify(action.payload),
-        expiresAt,
-        now: new Date().toISOString(),
-      });
+    const result = await this.pendingActionsRepo.insert({
+      user_id: userSettings.user_id,
+      provider: userSettings.provider,
+      external_id: userSettings.linked_external_id,
+      action_name: action.name,
+      action_payload: JSON.stringify(action.payload),
+      expires_at: expiresAt,
+      created_at: nowIso(),
+    });
 
-    return Number(result.lastInsertRowid);
+    return Number((result.identifiers[0] as { id: number }).id);
   }
 
-  private getPendingAction(
+  private async getPendingAction(
     userSettings: AiBotUserSettingsRow,
     pendingId: number | null,
-  ): PendingActionRow | null {
-    this.databaseService.connection
-      .prepare(
-        `
-          DELETE FROM ai_bot_pending_actions
-          WHERE expires_at <= @now
-        `,
-      )
-      .run({ now: new Date().toISOString() });
+  ): Promise<PendingActionRow | null> {
+    await this.pendingActionsRepo.delete({ expires_at: LessThanOrEqual(nowIso()) });
 
-    const baseParams = {
-      userId: userSettings.user_id,
-      provider: userSettings.provider,
-      externalId: userSettings.linked_external_id,
-      pendingId,
-    };
+    const query = this.pendingActionsRepo
+      .createQueryBuilder('a')
+      .where('a.user_id = :userId', { userId: userSettings.user_id })
+      .andWhere('a.provider = :provider', { provider: userSettings.provider })
+      .andWhere('a.external_id = :externalId', { externalId: userSettings.linked_external_id })
+      .orderBy('a.created_at', 'DESC')
+      .addOrderBy('a.id', 'DESC')
+      .limit(1);
 
-    return (
-      (this.databaseService.connection
-        .prepare(
-          `
-            SELECT *
-            FROM ai_bot_pending_actions
-            WHERE user_id = @userId
-              AND provider = @provider
-              AND external_id = @externalId
-              ${pendingId === null ? '' : 'AND id = @pendingId'}
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-          `,
-        )
-        .get(baseParams) as PendingActionRow | undefined) ?? null
-    );
+    if (pendingId !== null) {
+      query.andWhere('a.id = :pendingId', { pendingId });
+    }
+
+    return ((await query.getOne()) as unknown as PendingActionRow | null) ?? null;
   }
 
-  private enforceAndRecordToolUsage(
+  private async enforceAndRecordToolUsage(
     userSettings: AiBotUserSettingsRow,
     adminSettings: AiBotAdminSettingsRow,
     toolCalls: Array<{ name: string; mode: 'readonly' | 'mutation' }>,
-  ): void {
+  ): Promise<void> {
     const readonlyCalls = toolCalls.filter((toolCall) => toolCall.mode === 'readonly');
 
     if (readonlyCalls.length === 0) {
       return;
     }
 
-    this.enforceBotUsageLimit(userSettings, adminSettings, 'read', readonlyCalls.length);
-    this.recordBotUsage(
+    await this.enforceBotUsageLimit(userSettings, adminSettings, 'read', readonlyCalls.length);
+    await this.recordBotUsage(
       userSettings,
       'read',
       readonlyCalls.length,
@@ -436,12 +430,12 @@ export class AiBotRuntimeService {
     );
   }
 
-  private enforceBotUsageLimit(
+  private async enforceBotUsageLimit(
     userSettings: AiBotUserSettingsRow,
     adminSettings: AiBotAdminSettingsRow,
     kind: BotUsageKind,
     increment: number,
-  ): void {
+  ): Promise<void> {
     const limit = this.readBotUsageLimit(userSettings, adminSettings, kind);
 
     if (!limit) {
@@ -450,25 +444,19 @@ export class AiBotRuntimeService {
 
     const dayStart = new Date();
     dayStart.setHours(0, 0, 0, 0);
-    const row = this.databaseService.connection
-      .prepare(
-        `
-          SELECT COALESCE(SUM(usage_count), 0) as count
-          FROM ai_bot_usage_logs
-          WHERE user_id = @userId
-            AND provider = @provider
-            AND kind = @kind
-            AND created_at >= @dayStart
-        `,
-      )
-      .get({
-        userId: userSettings.user_id,
-        provider: userSettings.provider,
-        kind,
-        dayStart: dayStart.toISOString(),
-      }) as { count: number } | undefined;
+    const rows = (await this.dataSource.query(
+      `
+        SELECT COALESCE(SUM(usage_count), 0)::bigint as count
+        FROM ai_bot_usage_logs
+        WHERE user_id = $1
+          AND provider = $2
+          AND kind = $3
+          AND created_at >= $4
+      `,
+      [userSettings.user_id, userSettings.provider, kind, dayStart.toISOString()],
+    )) as Array<{ count: unknown }>;
 
-    if ((row?.count ?? 0) + increment > limit) {
+    if (Number(rows[0]?.count ?? 0) + increment > limit) {
       throw new BadRequestException(this.getLimitMessage(kind));
     }
   }
@@ -499,35 +487,28 @@ export class AiBotRuntimeService {
     }
   }
 
-  private recordBotUsage(
+  private async recordBotUsage(
     userSettings: AiBotUserSettingsRow,
     kind: BotUsageKind,
     count: number,
     actionName: string | null,
-  ): void {
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO ai_bot_usage_logs (user_id, provider, kind, action_name, usage_count, created_at)
-          VALUES (@userId, @provider, @kind, @actionName, @count, @now)
-        `,
-      )
-      .run({
-        userId: userSettings.user_id,
-        provider: userSettings.provider,
-        kind,
-        actionName,
-        count,
-        now: new Date().toISOString(),
-      });
+  ): Promise<void> {
+    await this.usageLogsRepo.insert({
+      user_id: userSettings.user_id,
+      provider: userSettings.provider,
+      kind,
+      action_name: actionName,
+      usage_count: count,
+      created_at: nowIso(),
+    });
   }
 
-  private recordMessageActivity(
+  private async recordMessageActivity(
     userSettings: AiBotUserSettingsRow,
     message: BotIncomingMessage,
     messageLength: number,
-  ): void {
-    this.activityService.record({
+  ): Promise<void> {
+    await this.activityService.record({
       actorId: userSettings.user_id,
       userId: userSettings.user_id,
       action: 'ai.bot.message',
@@ -541,11 +522,11 @@ export class AiBotRuntimeService {
     });
   }
 
-  private assertBotActionsAllowed(
+  private async assertBotActionsAllowed(
     userSettings: AiBotUserSettingsRow,
     actions: AiToolAction[],
-  ): void {
-    const allowedToolNames = this.createAllowedToolSet(userSettings);
+  ): Promise<void> {
+    const allowedToolNames = await this.createAllowedToolSet(userSettings);
     const denied = actions
       .map((action) => action.name)
       .filter((name) => !allowedToolNames.has(name));
@@ -555,7 +536,9 @@ export class AiBotRuntimeService {
     }
   }
 
-  private createAllowedToolSet(userSettings: AiBotUserSettingsRow): ReadonlySet<string> {
+  private async createAllowedToolSet(
+    userSettings: AiBotUserSettingsRow,
+  ): Promise<ReadonlySet<string>> {
     const permissions = this.readPermissions(userSettings);
     const canWrite = userSettings.access_mode === 'write';
     const tools = new Set<string>();
@@ -578,7 +561,7 @@ export class AiBotRuntimeService {
       tools.add('attachments.list');
     }
 
-    if (this.isAdminUser(userSettings.user_id)) {
+    if (await this.isAdminUser(userSettings.user_id)) {
       tools.add('admin.users.list');
       tools.add('admin.stats.read');
     }
@@ -625,12 +608,12 @@ export class AiBotRuntimeService {
     return tools;
   }
 
-  private isAdminUser(userId: number): boolean {
-    const row = this.databaseService.connection
-      .prepare('SELECT role FROM users WHERE id = ?')
-      .get(userId) as { role: string } | undefined;
+  private async isAdminUser(userId: number): Promise<boolean> {
+    const rows = (await this.dataSource.query('SELECT role FROM users WHERE id = $1', [
+      userId,
+    ])) as Array<{ role: string }>;
 
-    return row?.role === 'admin';
+    return rows[0]?.role === 'admin';
   }
 
   private readPermissions(userSettings: AiBotUserSettingsRow): AiBotPermissions {
@@ -831,8 +814,8 @@ export class AiBotRuntimeService {
     return token;
   }
 
-  private getEnabledAdminSettings(provider: AiBotProvider): AiBotAdminSettingsRow {
-    const settings = this.aiBotSettingsService.getAdminSettings(provider);
+  private async getEnabledAdminSettings(provider: AiBotProvider): Promise<AiBotAdminSettingsRow> {
+    const settings = await this.aiBotSettingsService.getAdminSettings(provider);
 
     if (!settings.enabled) {
       throw new BadRequestException(`${provider} bot is disabled`);

@@ -1,5 +1,3 @@
-import type { ActivityResponse } from '../activity/activity.types';
-
 export type MonitoringRange = 'hour' | 'day' | 'week' | 'month';
 
 export interface RequestSample {

@@ -32,7 +32,7 @@ export class AiController {
   ) {}
 
   @Get('settings')
-  getSettings(@Req() request: AuthenticatedRequest): AiSettingsResponse {
+  getSettings(@Req() request: AuthenticatedRequest): Promise<AiSettingsResponse> {
     return this.aiService.getSettings(request.user.id);
   }
 
@@ -40,7 +40,7 @@ export class AiController {
   updateSettings(
     @Req() request: AuthenticatedRequest,
     @Body() dto: UpdateAiSettingsDto,
-  ): AiSettingsResponse {
+  ): Promise<AiSettingsResponse> {
     return this.aiService.updateSettings(request.user.id, dto);
   }
 
@@ -64,7 +64,7 @@ export class AiController {
   }
 
   @Get('usage/monthly')
-  getMonthlyUsage(@Req() request: AuthenticatedRequest): AiMonthlyUsageResponse {
+  getMonthlyUsage(@Req() request: AuthenticatedRequest): Promise<AiMonthlyUsageResponse> {
     return this.aiService.getMonthlyUsage(request.user.id);
   }
 
@@ -80,13 +80,13 @@ export class AiController {
   executeAction(
     @Req() request: AuthenticatedRequest,
     @Body() dto: ExecuteAiToolDto,
-  ): AiToolExecutionResponse {
+  ): Promise<AiToolExecutionResponse> {
     return this.aiService.executeAction(request.user.id, dto);
   }
 
   @Get('bots/admin-settings')
   @UseGuards(AdminGuard)
-  listBotAdminSettings(): AiBotAdminSettingsResponse[] {
+  listBotAdminSettings(): Promise<AiBotAdminSettingsResponse[]> {
     return this.aiBotSettingsService.listAdminSettings();
   }
 
@@ -96,7 +96,7 @@ export class AiController {
     @Req() request: AuthenticatedRequest,
     @Param('provider') provider: string,
     @Body() dto: UpdateAiBotAdminSettingsDto,
-  ): AiBotAdminSettingsResponse {
+  ): Promise<AiBotAdminSettingsResponse> {
     return this.aiBotSettingsService.updateAdminSettings(request.user.id, provider, dto);
   }
 
@@ -110,7 +110,7 @@ export class AiController {
   }
 
   @Get('bots/me')
-  listBotUserSettings(@Req() request: AuthenticatedRequest): AiBotUserSettingsResponse[] {
+  listBotUserSettings(@Req() request: AuthenticatedRequest): Promise<AiBotUserSettingsResponse[]> {
     return this.aiBotSettingsService.listUserSettings(request.user.id);
   }
 
@@ -119,7 +119,7 @@ export class AiController {
     @Req() request: AuthenticatedRequest,
     @Param('provider') provider: string,
     @Body() dto: UpdateAiBotUserSettingsDto,
-  ): AiBotUserSettingsResponse {
+  ): Promise<AiBotUserSettingsResponse> {
     return this.aiBotSettingsService.updateUserSettings(request.user.id, provider, dto);
   }
 
@@ -127,7 +127,7 @@ export class AiController {
   createBotLinkCode(
     @Req() request: AuthenticatedRequest,
     @Body() dto: CreateAiBotLinkCodeDto,
-  ): AiBotLinkCodeResponse {
+  ): Promise<AiBotLinkCodeResponse> {
     return this.aiBotSettingsService.createLinkCode(request.user.id, dto.provider);
   }
 }

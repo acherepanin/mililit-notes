@@ -2,6 +2,8 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 
 const keyLength = 64;
 
+// Хеширование пароля через scrypt с уникальной солью.
+// Формат хранения: `scrypt:<salt>:<hash>`.
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex');
   const hash = scryptSync(password, salt, keyLength).toString('hex');

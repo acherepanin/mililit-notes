@@ -88,7 +88,7 @@ export class PublicShareController {
   getPublicShare(
     @Param('token') token: string,
     @Req() request: PublicRequest,
-  ): PublicShareResponse {
+  ): Promise<PublicShareResponse> {
     const userAgent = request.headers['user-agent'];
     return this.workspaceService.getPublicShare(
       token,
@@ -103,7 +103,7 @@ export class WorkspaceController {
   constructor(@Inject(WorkspaceService) private readonly workspaceService: WorkspaceService) {}
 
   @Get('templates')
-  listTemplates(@Req() request: AuthenticatedRequest): NoteTemplateResponse[] {
+  listTemplates(@Req() request: AuthenticatedRequest): Promise<NoteTemplateResponse[]> {
     return this.workspaceService.listTemplates(request.user.id);
   }
 
@@ -111,7 +111,7 @@ export class WorkspaceController {
   createTemplate(
     @Req() request: AuthenticatedRequest,
     @Body() dto: TemplateDto,
-  ): NoteTemplateResponse {
+  ): Promise<NoteTemplateResponse> {
     return this.workspaceService.createTemplate(request.user.id, dto);
   }
 
@@ -120,7 +120,7 @@ export class WorkspaceController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: TemplateDto,
-  ): NoteTemplateResponse {
+  ): Promise<NoteTemplateResponse> {
     return this.workspaceService.updateTemplate(request.user.id, id, dto);
   }
 
@@ -128,7 +128,7 @@ export class WorkspaceController {
   deleteTemplate(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): { id: number } {
+  ): Promise<{ id: number }> {
     return this.workspaceService.deleteTemplate(request.user.id, id);
   }
 
@@ -141,12 +141,12 @@ export class WorkspaceController {
   }
 
   @Get('export/json')
-  exportJson(@Req() request: AuthenticatedRequest): ExportResponse {
+  exportJson(@Req() request: AuthenticatedRequest): Promise<ExportResponse> {
     return this.workspaceService.exportJson(request.user.id);
   }
 
   @Get('attachment-folders')
-  listAttachmentFolders(@Req() request: AuthenticatedRequest): AttachmentFolderResponse[] {
+  listAttachmentFolders(@Req() request: AuthenticatedRequest): Promise<AttachmentFolderResponse[]> {
     return this.workspaceService.listAttachmentFolders(request.user.id);
   }
 
@@ -154,7 +154,7 @@ export class WorkspaceController {
   createAttachmentFolder(
     @Req() request: AuthenticatedRequest,
     @Body() dto: AttachmentFolderDto,
-  ): AttachmentFolderResponse {
+  ): Promise<AttachmentFolderResponse> {
     return this.workspaceService.createAttachmentFolder(request.user.id, dto);
   }
 
@@ -163,7 +163,7 @@ export class WorkspaceController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AttachmentFolderDto,
-  ): AttachmentFolderResponse {
+  ): Promise<AttachmentFolderResponse> {
     return this.workspaceService.renameAttachmentFolder(request.user.id, id, dto);
   }
 
@@ -171,7 +171,7 @@ export class WorkspaceController {
   deleteAttachmentFolder(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): { id: number } {
+  ): Promise<{ id: number }> {
     return this.workspaceService.deleteAttachmentFolder(request.user.id, id);
   }
 
@@ -180,7 +180,7 @@ export class WorkspaceController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: MoveAttachmentFolderParentDto,
-  ): AttachmentFolderResponse {
+  ): Promise<AttachmentFolderResponse> {
     return this.workspaceService.moveAttachmentFolder(request.user.id, id, dto);
   }
 
@@ -188,29 +188,26 @@ export class WorkspaceController {
   listAccountAttachments(
     @Req() request: AuthenticatedRequest,
     @Query('folderId') folderId?: string,
-  ): AttachmentResponse[] {
-    return this.workspaceService.listAccountAttachments(
-      request.user.id,
-      parseFolderId(folderId),
-    );
+  ): Promise<AttachmentResponse[]> {
+    return this.workspaceService.listAccountAttachments(request.user.id, parseFolderId(folderId));
   }
 
   @Post('attachments')
   uploadAccountAttachment(
     @Req() request: AuthenticatedRequest,
     @Body() dto: UploadAttachmentDto,
-  ): AttachmentResponse {
+  ): Promise<AttachmentResponse> {
     return this.workspaceService.uploadAttachment(request.user.id, dto);
   }
 
   @Get('attachments/archive')
-  downloadAccountAttachmentsArchive(
+  async downloadAccountAttachmentsArchive(
     @Req() request: AuthenticatedRequest,
     @Query('ids') ids: string | undefined,
     @Query('folderIds') folderIds: string | undefined,
     @Res() response: DownloadResponse,
-  ): void {
-    const { fileName, content } = this.workspaceService.downloadAccountAttachmentsArchive(
+  ): Promise<void> {
+    const { fileName, content } = await this.workspaceService.downloadAccountAttachmentsArchive(
       request.user.id,
       parseAttachmentIds(ids),
       parseFolderIds(folderIds),
@@ -224,7 +221,7 @@ export class WorkspaceController {
   importJson(
     @Req() request: AuthenticatedRequest,
     @Body() dto: ImportNotesDto,
-  ): { imported: number } {
+  ): Promise<{ imported: number }> {
     return this.workspaceService.importJson(request.user.id, dto);
   }
 
@@ -233,7 +230,7 @@ export class WorkspaceController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UploadAttachmentDto,
-  ): AttachmentResponse {
+  ): Promise<AttachmentResponse> {
     return this.workspaceService.uploadAttachment(request.user.id, { ...dto, noteId: id });
   }
 
@@ -241,18 +238,18 @@ export class WorkspaceController {
   listAttachments(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): AttachmentResponse[] {
+  ): Promise<AttachmentResponse[]> {
     return this.workspaceService.listAttachments(request.user.id, id);
   }
 
   @Get('notes/:id/attachments/archive')
-  downloadAttachmentsArchive(
+  async downloadAttachmentsArchive(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Query('ids') ids: string | undefined,
     @Res() response: DownloadResponse,
-  ): void {
-    const { fileName, content } = this.workspaceService.downloadAttachmentsArchive(
+  ): Promise<void> {
+    const { fileName, content } = await this.workspaceService.downloadAttachmentsArchive(
       request.user.id,
       id,
       parseAttachmentIds(ids),
@@ -267,7 +264,7 @@ export class WorkspaceController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: RenameAttachmentDto,
-  ): AttachmentResponse {
+  ): Promise<AttachmentResponse> {
     return this.workspaceService.renameAttachment(request.user.id, id, dto);
   }
 
@@ -276,7 +273,7 @@ export class WorkspaceController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AttachAttachmentDto,
-  ): AttachmentResponse {
+  ): Promise<AttachmentResponse> {
     return this.workspaceService.attachAttachmentToNote(request.user.id, id, dto);
   }
 
@@ -285,7 +282,7 @@ export class WorkspaceController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: MoveAttachmentFolderDto,
-  ): AttachmentResponse {
+  ): Promise<AttachmentResponse> {
     return this.workspaceService.moveAttachmentToFolder(request.user.id, id, dto);
   }
 
@@ -294,17 +291,17 @@ export class WorkspaceController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: DuplicateAttachmentDto,
-  ): AttachmentResponse {
+  ): Promise<AttachmentResponse> {
     return this.workspaceService.duplicateAttachment(request.user.id, id, dto);
   }
 
   @Get('attachments/:id/download')
-  downloadAttachment(
+  async downloadAttachment(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Res() response: DownloadResponse,
-  ): void {
-    const { record, content } = this.workspaceService.downloadAttachment(request.user.id, id);
+  ): Promise<void> {
+    const { record, content } = await this.workspaceService.downloadAttachment(request.user.id, id);
     response.setHeader('Content-Type', record.mimeType);
     response.setHeader(
       'Content-Disposition',
@@ -317,7 +314,7 @@ export class WorkspaceController {
   deleteAttachment(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): { id: number } {
+  ): Promise<{ id: number }> {
     return this.workspaceService.deleteAttachment(request.user.id, id);
   }
 
@@ -325,7 +322,7 @@ export class WorkspaceController {
   listShareLinks(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): ShareLinkResponse[] {
+  ): Promise<ShareLinkResponse[]> {
     return this.workspaceService.listShareLinks(request.user.id, id);
   }
 
@@ -334,7 +331,7 @@ export class WorkspaceController {
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateShareLinkDto,
-  ): ShareLinkResponse {
+  ): Promise<ShareLinkResponse> {
     return this.workspaceService.createShareLink(request.user.id, id, dto);
   }
 
@@ -342,7 +339,7 @@ export class WorkspaceController {
   revokeShareLink(
     @Req() request: AuthenticatedRequest,
     @Param('id', ParseIntPipe) id: number,
-  ): { id: number } {
+  ): Promise<{ id: number }> {
     return this.workspaceService.revokeShareLink(request.user.id, id);
   }
 }

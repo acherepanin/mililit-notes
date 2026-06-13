@@ -25,13 +25,13 @@ export class AuthController {
 
   @Public()
   @Post('auth/login')
-  login(@Body() dto: LoginDto): { token: string; user: MeResponse } {
+  login(@Body() dto: LoginDto): Promise<{ token: string; user: MeResponse }> {
     return this.authService.login(dto);
   }
 
   @Public()
   @Post('auth/register')
-  register(@Body() dto: RegisterDto): RegistrationPendingResponse {
+  register(@Body() dto: RegisterDto): Promise<RegistrationPendingResponse> {
     return this.registrationService.requestRegistration(dto);
   }
 
@@ -39,20 +39,20 @@ export class AuthController {
   @Get('auth/register/pending/:id')
   getRegistrationPendingStatus(
     @Param('id', ParseIntPipe) id: number,
-  ): { status: RegistrationPendingStatus } {
+  ): Promise<{ status: RegistrationPendingStatus }> {
     return this.registrationService.getPendingStatus(id);
   }
 
   @Public()
   @Get('auth/verify-email')
-  verifyEmail(@Query('token') token: string): { ok: true } {
+  verifyEmail(@Query('token') token: string): Promise<{ ok: true }> {
     return this.registrationService.verifyEmail(token);
   }
 
   @Get('me')
   getMe(
     @Req() request: AuthenticatedRequest,
-  ): MeResponse & { subscription: MeSubscriptionBundle } {
+  ): Promise<MeResponse & { subscription: MeSubscriptionBundle }> {
     return this.authService.getMe(request.user.id);
   }
 
@@ -60,7 +60,7 @@ export class AuthController {
   updatePreferences(
     @Req() request: AuthenticatedRequest,
     @Body() dto: UpdatePreferencesDto,
-  ): MeResponse & { subscription: MeSubscriptionBundle } {
+  ): Promise<MeResponse & { subscription: MeSubscriptionBundle }> {
     return this.authService.updatePreferences(request.user.id, dto);
   }
 
@@ -68,7 +68,7 @@ export class AuthController {
   updateProfile(
     @Req() request: AuthenticatedRequest,
     @Body() dto: UpdateProfileDto,
-  ): MeResponse & { subscription: MeSubscriptionBundle } {
+  ): Promise<MeResponse & { subscription: MeSubscriptionBundle }> {
     return this.authService.updateProfile(request.user.id, dto);
   }
 
@@ -76,7 +76,7 @@ export class AuthController {
   changePassword(
     @Req() request: AuthenticatedRequest,
     @Body() dto: ChangePasswordDto,
-  ): { ok: true } {
+  ): Promise<{ ok: true }> {
     return this.authService.changePassword(request.user.id, dto);
   }
 }

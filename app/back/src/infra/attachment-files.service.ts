@@ -1,35 +1,40 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync, unlinkSync } from 'node:fs';
+import { In, Repository } from 'typeorm';
 
-import { DatabaseService } from './database.service';
-import { bindSqlList } from './sql';
+import { AttachmentEntity } from '../database/entities/attachment.entity';
 
+/**
+ * Removes attachment files from disk. The database rows themselves are removed
+ * via cascade (user delete) or by the workspace service; this service only
+ * deals with the filesystem side-effects.
+ */
 @Injectable()
 export class AttachmentFilesService {
   private readonly logger = new Logger(AttachmentFilesService.name);
 
-  constructor(@Inject(DatabaseService) private readonly databaseService: DatabaseService) {}
+  constructor(
+    @InjectRepository(AttachmentEntity)
+    private readonly attachmentsRepo: Repository<AttachmentEntity>,
+  ) {}
 
-  deleteForUser(userId: number): void {
-    const rows = this.databaseService.connection
-      .prepare('SELECT storage_path FROM attachments WHERE user_id = @userId')
-      .all({ userId }) as Array<{ storage_path: string }>;
-
+  async deleteForUser(userId: number): Promise<void> {
+    const rows = await this.attachmentsRepo.find({
+      where: { user_id: userId },
+      select: { storage_path: true },
+    });
     this.deleteFiles(rows);
   }
 
-  deleteByIds(userId: number, attachmentIds: number[]): void {
+  async deleteByIds(userId: number, attachmentIds: number[]): Promise<void> {
     if (attachmentIds.length === 0) {
       return;
     }
-
-    const ids = bindSqlList('id', attachmentIds);
-    const rows = this.databaseService.connection
-      .prepare(
-        `SELECT storage_path FROM attachments WHERE id IN (${ids.placeholders}) AND user_id = @userId`,
-      )
-      .all({ ...ids.params, userId }) as Array<{ storage_path: string }>;
-
+    const rows = await this.attachmentsRepo.find({
+      where: { id: In(attachmentIds), user_id: userId },
+      select: { storage_path: true },
+    });
     this.deleteFiles(rows);
   }
 
@@ -39,7 +44,6 @@ export class AttachmentFilesService {
         if (!existsSync(row.storage_path)) {
           continue;
         }
-
         unlinkSync(row.storage_path);
       } catch (caught) {
         this.logger.warn(

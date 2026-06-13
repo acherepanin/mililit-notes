@@ -1,0 +1,28 @@
+name: notes
+
+services:
+  # База данных: роль и БД создаются при первом старте
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: adm136479
+      POSTGRES_DB: notes
+    volumes:
+      - notes-db:/var/lib/postgresql/data
+
+  # Приложение: конфигурация запечена в образ
+  notes:
+    image: ghcr.io/owner/notes-app:latest
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "3000:3000"
+    volumes:
+      - notes-uploads:/app/data
+
+volumes:
+  notes-db:
+  notes-uploads:

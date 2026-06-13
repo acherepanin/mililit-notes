@@ -28,6 +28,7 @@ function isTokenPayload(value: unknown): value is TokenPayload {
   );
 }
 
+// Сравнение подписей за постоянное время — защита от timing-атак.
 function signaturesMatch(receivedSignature: string, expectedSignature: string): boolean {
   const received = Buffer.from(receivedSignature);
   const expected = Buffer.from(expectedSignature);
@@ -35,6 +36,7 @@ function signaturesMatch(receivedSignature: string, expectedSignature: string): 
   return received.length === expected.length && timingSafeEqual(received, expected);
 }
 
+// Лёгкий токен формата `payload.signature` (HMAC-SHA256), без внешних JWT-библиотек.
 export function createSignedToken(payload: TokenPayload, secret: string): string {
   const encodedPayload = toBase64Url(JSON.stringify(payload));
 

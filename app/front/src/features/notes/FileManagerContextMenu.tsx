@@ -21,11 +21,7 @@ import type { Translator } from '../../i18n';
 import type { Attachment, AttachmentFolder } from '../../types';
 import { FileManagerAttachPicker } from './FileManagerAttachPicker';
 import { FileManagerMovePicker } from './FileManagerMovePicker';
-import {
-  buildNotePickerOptions,
-  getLinkedNotesFromAttachments,
-  type NotePickerOption,
-} from './fileManager.helpers';
+import { getLinkedNotesFromAttachments, type NotePickerOption } from './fileManager.helpers';
 
 export interface FileManagerContextMenuState {
   x: number;

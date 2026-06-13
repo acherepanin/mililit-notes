@@ -19,7 +19,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { aiApi, notesApi, workspaceApi } from '../../api';
-import { DeleteConfirmationProvider, useConfirmDelete } from '../../components/DeleteConfirmationProvider';
+import { DeleteConfirmationProvider } from '../../components/DeleteConfirmationProvider';
+import { useConfirmDelete } from '../../components/deleteConfirmation';
 import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import { Modal } from '../../components/Modal';
@@ -32,6 +33,7 @@ import type { Translator } from '../../i18n';
 import { getNextTheme } from '../../themes';
 import type { AiSettings, MeUser, NoteTreeNode, Tag, UserLanguage, UserTheme } from '../../types';
 import type { ToastKind } from '../../components/useToasts';
+import { resolveApiError } from '../../utils/apiErrors';
 import { escapeHtml } from '../../utils/html';
 import { AiAssistant } from '../ai/AiAssistant';
 import { CommandPalette, type CommandPaletteItem } from './CommandPalette';
@@ -176,7 +178,7 @@ function AuthenticatedAppMain({
       pushToast('success', t('saved'));
     } catch (caught: unknown) {
       workspace.setActionError(caught, t('saveError'));
-      pushToast('error', t('saveError'));
+      pushToast('error', resolveApiError(caught, t, 'saveError'));
     }
   }, [editor, pushToast, t, workspace]);
 
@@ -220,7 +222,7 @@ function AuthenticatedAppMain({
         })
         .catch((caught: unknown) => {
           workspace.setActionError(caught, t('createError'));
-          pushToast('error', t('createError'));
+          pushToast('error', resolveApiError(caught, t, 'createError'));
         });
     },
     [pushToast, t, workspace],
@@ -235,7 +237,7 @@ function AuthenticatedAppMain({
         })
         .catch((caught: unknown) => {
           workspace.setActionError(caught, t('saveError'));
-          pushToast('error', t('saveError'));
+          pushToast('error', resolveApiError(caught, t, 'saveError'));
         });
     },
     [pushToast, t, workspace],
@@ -261,7 +263,7 @@ function AuthenticatedAppMain({
         })
         .catch((caught: unknown) => {
           workspace.setActionError(caught, t('deleteError'));
-          pushToast('error', t('deleteError'));
+          pushToast('error', resolveApiError(caught, t, 'deleteError'));
         });
     },
     [confirmDelete, pushToast, t, workspace],
@@ -284,7 +286,7 @@ function AuthenticatedAppMain({
       })
       .catch((caught: unknown) => {
         workspace.setActionError(caught, t('deleteError'));
-        pushToast('error', t('deleteError'));
+        pushToast('error', resolveApiError(caught, t, 'deleteError'));
       });
   }, [confirmDelete, editor, pushToast, t, workspace]);
 
@@ -312,7 +314,7 @@ function AuthenticatedAppMain({
       })
       .catch((caught: unknown) => {
         workspace.setActionError(caught, t('deleteError'));
-        pushToast('error', t('deleteError'));
+        pushToast('error', resolveApiError(caught, t, 'deleteError'));
       });
   }, [confirmDelete, editor, pushToast, t, workspace]);
 
@@ -353,7 +355,7 @@ function AuthenticatedAppMain({
     (parentId: number | null) => {
       workspace.moveDraggedNote(parentId).catch((caught: unknown) => {
         workspace.setActionError(caught, t('moveError'));
-        pushToast('error', t('moveError'));
+        pushToast('error', resolveApiError(caught, t, 'moveError'));
       });
     },
     [pushToast, t, workspace],
@@ -374,7 +376,7 @@ function AuthenticatedAppMain({
         .then(() => pushToast('success', t('saved')))
         .catch((caught: unknown) => {
           workspace.setActionError(caught, t('saveError'));
-          pushToast('error', t('saveError'));
+          pushToast('error', resolveApiError(caught, t, 'saveError'));
         });
     },
     [pushToast, t, workspace],
@@ -392,7 +394,7 @@ function AuthenticatedAppMain({
         pushToast('success', t('saved'));
       } catch (caught: unknown) {
         workspace.setActionError(caught, t('saveError'));
-        pushToast('error', t('saveError'));
+        pushToast('error', resolveApiError(caught, t, 'saveError'));
         throw caught;
       }
     },
@@ -423,7 +425,7 @@ function AuthenticatedAppMain({
         pushToast('success', t('saved'));
       } catch (caught: unknown) {
         workspace.setActionError(caught, t('saveError'));
-        pushToast('error', t('saveError'));
+        pushToast('error', resolveApiError(caught, t, 'saveError'));
         throw caught;
       }
     },
@@ -456,7 +458,7 @@ function AuthenticatedAppMain({
         pushToast('success', t('delete'));
       } catch (caught: unknown) {
         workspace.setActionError(caught, t('deleteError'));
-        pushToast('error', t('deleteError'));
+        pushToast('error', resolveApiError(caught, t, 'deleteError'));
         throw caught;
       }
     },
@@ -477,7 +479,7 @@ function AuthenticatedAppMain({
       .then(() => pushToast('success', t('saved')))
       .catch((caught: unknown) => {
         workspace.setActionError(caught, t('saveError'));
-        pushToast('error', t('saveError'));
+        pushToast('error', resolveApiError(caught, t, 'saveError'));
       });
   }, [pushToast, t, workspace]);
 
@@ -495,7 +497,7 @@ function AuthenticatedAppMain({
       .then(() => pushToast('success', t('saved')))
       .catch((caught: unknown) => {
         workspace.setActionError(caught, t('saveError'));
-        pushToast('error', t('saveError'));
+        pushToast('error', resolveApiError(caught, t, 'saveError'));
       });
   }, [pushToast, t, workspace]);
 
@@ -504,7 +506,7 @@ function AuthenticatedAppMain({
       .exportJson()
       .then((payload) => downloadJsonFile(payload))
       .then(() => pushToast('success', t('download')))
-      .catch(() => pushToast('error', t('saveError')));
+      .catch((caught: unknown) => pushToast('error', resolveApiError(caught, t, 'saveError')));
   }, [pushToast, t]);
 
   const importJsonFile = useCallback(
@@ -515,7 +517,7 @@ function AuthenticatedAppMain({
         .then((payload) => workspaceApi.importJson(payload))
         .then(() => Promise.all([workspace.refreshTree(), refreshGlobalTags()]))
         .then(() => pushToast('success', t('saved')))
-        .catch(() => pushToast('error', t('saveError')));
+        .catch((caught: unknown) => pushToast('error', resolveApiError(caught, t, 'saveError')));
     },
     [pushToast, refreshGlobalTags, t, workspace],
   );

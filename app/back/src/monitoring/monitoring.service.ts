@@ -1,8 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { InjectDataSource } from '@nestjs/typeorm';
 import { freemem, loadavg, totalmem } from 'node:os';
+import { DataSource } from 'typeorm';
 
+import type { ActivityResponse } from '../activity/activity.types';
 import { ActivityService } from '../activity/activity.service';
-import { DatabaseService } from '../infra/database.service';
 import { RequestErrorLogService } from './request-error-log.service';
 import { RequestMetricsService } from './request-metrics.service';
 import {
@@ -14,6 +16,7 @@ import type {
   MonitoringPerformanceBucket,
   MonitoringPerformanceResponse,
   MonitoringRange,
+  RequestErrorResponse,
   SubscriptionLogRecord,
   SubscriptionLogResponse,
 } from './monitoring.types';
@@ -21,24 +24,23 @@ import type {
 @Injectable()
 export class MonitoringService {
   private readonly processStartCpu = process.cpuUsage();
-  private readonly processStartedAt = Date.now();
 
   constructor(
     @Inject(ActivityService) private readonly activityService: ActivityService,
-    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(RequestErrorLogService) private readonly requestErrorLogService: RequestErrorLogService,
     @Inject(RequestMetricsService) private readonly requestMetricsService: RequestMetricsService,
   ) {}
 
-  listActions(limit?: number) {
-    return this.activityService.list(normalizeMonitoringLimit(limit), { excludeSubscription: true });
+  listActions(limit?: number): Promise<ActivityResponse[]> {
+    return this.activityService.list(normalizeMonitoringLimit(limit), {
+      excludeSubscription: true,
+    });
   }
 
-  listSubscriptionLogs(limit?: number): SubscriptionLogResponse[] {
-    const normalizedLimit = normalizeMonitoringLimit(limit);
-    const rows = this.databaseService.connection
-      .prepare(
-        `
+  async listSubscriptionLogs(limit?: number): Promise<SubscriptionLogResponse[]> {
+    const rows = (await this.dataSource.query(
+      `
           SELECT
             combined.*,
             totals.total_spent_cents,
@@ -99,10 +101,10 @@ export class MonitoringService {
             GROUP BY user_id
           ) totals ON totals.user_id = combined.user_id
           ORDER BY combined.created_at DESC, combined.id DESC
-          LIMIT @limit
+          LIMIT $1
         `,
-      )
-      .all({ limit: normalizedLimit }) as SubscriptionLogRecord[];
+      [normalizeMonitoringLimit(limit)],
+    )) as SubscriptionLogRecord[];
 
     return rows.map((row) => ({
       id: row.id,
@@ -121,12 +123,12 @@ export class MonitoringService {
       startedAt: row.started_at,
       expiresAt: row.expires_at,
       createdAt: row.created_at,
-      totalSpentCents: row.total_spent_cents ?? 0,
+      totalSpentCents: Number(row.total_spent_cents ?? 0),
       lastPurchaseAt: row.last_purchase_at,
     }));
   }
 
-  listErrors(limit?: number) {
+  listErrors(limit?: number): Promise<RequestErrorResponse[]> {
     return this.requestErrorLogService.list(normalizeMonitoringLimit(limit));
   }
 

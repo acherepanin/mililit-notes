@@ -168,16 +168,3 @@ export function buildPlanFeatureItems(
     buildFilesItem(entitlements, t, language),
   ];
 }
-
-function formatFeatureSummary(item: PlanFeatureItem, t: Translator): string {
-  if (!item.available) {
-    return `${item.label}: ${t('planFeatureNotIncluded')}`;
-  }
-
-  const detailLines = item.details?.length ? item.details : item.detail ? [item.detail] : [];
-  if (!detailLines.length) {
-    return item.label;
-  }
-
-  return `${item.label}: ${detailLines.join(' · ')}`;
-}

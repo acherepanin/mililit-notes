@@ -1,18 +1,53 @@
 import type { SelectOption } from './components/CustomSelect';
 import type { Translator } from './i18n';
 
-export const USER_THEMES = ['dark', 'light', 'aurora', 'ember', 'ocean'] as const;
+export const USER_THEMES = ['dark', 'light', 'system'] as const;
 
 export type UserTheme = (typeof USER_THEMES)[number];
 
-const THEME_LABEL_KEY: Record<UserTheme, 'dark' | 'light' | 'themeAurora' | 'themeEmber' | 'themeOcean'> =
-  {
-    dark: 'dark',
-    light: 'light',
-    aurora: 'themeAurora',
-    ember: 'themeEmber',
-    ocean: 'themeOcean',
+export type AppliedTheme = 'dark' | 'light';
+
+const THEME_LABEL_KEY: Record<UserTheme, 'dark' | 'light' | 'themeSystem'> = {
+  dark: 'dark',
+  light: 'light',
+  system: 'themeSystem',
+};
+
+const darkSchemeQuery =
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null;
+
+let selectedTheme: UserTheme = 'dark';
+
+export function resolveAppliedTheme(theme: UserTheme): AppliedTheme {
+  if (theme === 'system') {
+    return darkSchemeQuery && !darkSchemeQuery.matches ? 'light' : 'dark';
+  }
+
+  return theme === 'light' ? 'light' : 'dark';
+}
+
+export function applyTheme(theme: UserTheme): void {
+  selectedTheme = theme;
+  if (typeof document !== 'undefined') {
+    document.documentElement.dataset.theme = resolveAppliedTheme(theme);
+  }
+}
+
+if (darkSchemeQuery) {
+  const handleSchemeChange = () => {
+    if (selectedTheme === 'system' && typeof document !== 'undefined') {
+      document.documentElement.dataset.theme = resolveAppliedTheme('system');
+    }
   };
+
+  if (typeof darkSchemeQuery.addEventListener === 'function') {
+    darkSchemeQuery.addEventListener('change', handleSchemeChange);
+  } else if (typeof darkSchemeQuery.addListener === 'function') {
+    darkSchemeQuery.addListener(handleSchemeChange);
+  }
+}
 
 export function isUserTheme(value: string | null | undefined): value is UserTheme {
   return !!value && (USER_THEMES as readonly string[]).includes(value);
@@ -33,7 +68,7 @@ export function getNextTheme(current: UserTheme): UserTheme {
 }
 
 export function isLightTheme(theme: UserTheme): boolean {
-  return theme === 'light';
+  return resolveAppliedTheme(theme) === 'light';
 }
 
 export function getThemeLabel(t: Translator, theme: UserTheme): string {

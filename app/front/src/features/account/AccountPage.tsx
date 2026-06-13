@@ -34,6 +34,7 @@ import {
   formatPlanBilling,
 } from '../../utils/subscriptionPricing';
 import { normalizeSubscriptionPlan } from '../../utils/planEntitlements';
+import { resolveApiError } from '../../utils/apiErrors';
 import {
   calculateCheckoutAmount,
   canRenewPlan,
@@ -144,8 +145,8 @@ export function AccountPage({
       const order = await subscriptionApi.checkout({ planId, mode, termMonths });
       setPendingOrder(order);
       pushToast('info', t('mockPaymentHint'));
-    } catch {
-      pushToast('error', t('checkoutError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'checkoutError'));
     }
   };
 
@@ -158,8 +159,8 @@ export function AccountPage({
       setPendingOrder(null);
       await onRefresh();
       pushToast('success', t('subscriptionActivated'));
-    } catch {
-      pushToast('error', t('checkoutError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'checkoutError'));
     }
   };
 
@@ -174,8 +175,8 @@ export function AccountPage({
       });
       await onRefresh();
       pushToast('success', t('profileSaved'));
-    } catch {
-      pushToast('error', t('saveError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'saveError'));
     } finally {
       setIsSavingProfile(false);
     }
@@ -192,8 +193,8 @@ export function AccountPage({
       setCurrentPassword('');
       setNewPassword('');
       pushToast('success', t('passwordChanged'));
-    } catch {
-      pushToast('error', t('passwordChangeError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'passwordChangeError'));
     } finally {
       setIsSavingPassword(false);
     }

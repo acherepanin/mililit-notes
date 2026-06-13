@@ -2,8 +2,11 @@ import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
+// Префикс-маркер формата шифротекста (версия схемы шифрования).
 const encryptedPrefix = 'ai:v1:';
 
+// Шифрование секретов AI-провайдеров (API-ключи) через AES-256-GCM.
+// Ключ выводится из AI_CREDENTIALS_ENCRYPTION_KEY; без него шифрование недоступно.
 @Injectable()
 export class AiCryptoService {
   private readonly key: Buffer | null;
@@ -15,7 +18,11 @@ export class AiCryptoService {
 
   encrypt(value: string): string {
     if (!this.key) {
-      throw new BadRequestException('AI credentials encryption key is not configured');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'AI credentials encryption key is not configured',
+        code: 'AI_KEY_MISSING',
+      });
     }
 
     const iv = randomBytes(12);
@@ -46,6 +53,7 @@ export class AiCryptoService {
     }
   }
 
+  // Маскированный «хвост» ключа для показа в UI (например, abcd...wxyz).
   createHint(value: string): string {
     const trimmed = value.trim();
 

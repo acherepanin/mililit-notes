@@ -1,29 +1,10 @@
 import { Trash2, Undo2 } from 'lucide-react';
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useCallback, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import type { Translator } from '../i18n';
+import { DeleteConfirmationContext, type DeleteConfirmationRequest } from './deleteConfirmation';
 import { IconButton } from './IconButton';
 import { Modal } from './Modal';
-
-export type DeleteConfirmationRequest = {
-  title: string;
-  description: string;
-};
-
-type DeleteConfirmationContextValue = {
-  confirmDelete: (request: DeleteConfirmationRequest) => Promise<boolean>;
-};
-
-const DeleteConfirmationContext = createContext<DeleteConfirmationContextValue | null>(null);
 
 export function DeleteConfirmationProvider({
   children,
@@ -149,12 +130,4 @@ function DeleteConfirmationDialog({
       </div>
     </Modal>
   );
-}
-
-export function useConfirmDelete() {
-  const context = useContext(DeleteConfirmationContext);
-  if (!context) {
-    throw new Error('useConfirmDelete must be used within DeleteConfirmationProvider');
-  }
-  return context.confirmDelete;
 }

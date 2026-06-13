@@ -67,7 +67,7 @@ export function SubscriptionTermPicker({
     <div className={className || undefined}>
       <IconActionMenu
         label={t('subscriptionTermLabel')}
-        tooltip={`${t('subscriptionTermLabel')}: ${formatCheckoutTermLabel(selectedTerm, language)}`}
+        tooltip={t('subscriptionTermLabel')}
         icon={<CalendarDays aria-hidden />}
         value={selectedTerm}
         options={options}

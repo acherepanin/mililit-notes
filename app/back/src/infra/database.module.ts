@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { ALL_ENTITIES } from '../database/entities';
 import { AttachmentFilesService } from './attachment-files.service';
-import { DatabaseService } from './database.service';
+import { DatabaseSeederService } from './database-seeder.service';
 
 @Module({
-  providers: [AttachmentFilesService, DatabaseService],
-  exports: [AttachmentFilesService, DatabaseService],
+  imports: [TypeOrmModule.forFeature([...ALL_ENTITIES])],
+  providers: [AttachmentFilesService, DatabaseSeederService],
+  exports: [AttachmentFilesService, TypeOrmModule],
 })
 export class DatabaseModule {}

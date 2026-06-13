@@ -1,6 +1,10 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { LessThan, Repository } from 'typeorm';
 
-import { DatabaseService } from '../infra/database.service';
+import { nowIso } from '../database/db.util';
+import { RequestErrorLogEntity } from '../database/entities/activity.entity';
+import { UserEntity } from '../database/entities/user.entity';
 import { isRecord } from '../utils/type-guards';
 import type { RequestErrorRecord, RequestErrorResponse } from './monitoring.types';
 import {
@@ -24,14 +28,17 @@ interface PersistRequestErrorParams {
 }
 
 @Injectable()
-export class RequestErrorLogService implements OnModuleInit {
-  constructor(@Inject(DatabaseService) private readonly databaseService: DatabaseService) {}
+export class RequestErrorLogService implements OnApplicationBootstrap {
+  constructor(
+    @InjectRepository(RequestErrorLogEntity)
+    private readonly errorsRepo: Repository<RequestErrorLogEntity>,
+  ) {}
 
-  onModuleInit(): void {
-    this.purgeOlderThanRetention();
+  async onApplicationBootstrap(): Promise<void> {
+    await this.purgeOlderThanRetention();
   }
 
-  record(params: PersistRequestErrorParams): void {
+  async record(params: PersistRequestErrorParams): Promise<void> {
     if (!shouldPersistRequestError(params.statusCode, params.method, params.path)) {
       return;
     }
@@ -39,57 +46,45 @@ export class RequestErrorLogService implements OnModuleInit {
     const sanitized = sanitizeErrorBody(params.errorBody);
     const message = params.message ? params.message.slice(0, MAX_MESSAGE_LENGTH) : null;
 
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO request_error_logs
-            (user_id, method, path, status_code, message, error_name, error_body, duration_ms, created_at)
-          VALUES
-            (@userId, @method, @path, @statusCode, @message, @errorName, @errorBody, @durationMs, @createdAt)
-        `,
-      )
-      .run({
-        userId: params.userId,
-        method: params.method.toUpperCase(),
-        path: params.path,
-        statusCode: params.statusCode,
-        message,
-        errorName: params.errorName,
-        errorBody: JSON.stringify(sanitized ?? {}),
-        durationMs: Math.max(0, Math.round(params.durationMs)),
-        createdAt: new Date().toISOString(),
-      });
+    await this.errorsRepo.insert({
+      user_id: params.userId,
+      method: params.method.toUpperCase(),
+      path: params.path,
+      status_code: params.statusCode,
+      message,
+      error_name: params.errorName,
+      error_body: JSON.stringify(sanitized ?? {}),
+      duration_ms: Math.max(0, Math.round(params.durationMs)),
+      created_at: nowIso(),
+    });
   }
 
-  list(limit?: number): RequestErrorResponse[] {
-    const normalizedLimit = normalizeMonitoringLimit(limit);
-    const rows = this.databaseService.connection
-      .prepare(
-        `
-          SELECT
-            request_error_logs.*,
-            users.username as username
-          FROM request_error_logs
-          LEFT JOIN users ON users.id = request_error_logs.user_id
-          ORDER BY request_error_logs.created_at DESC, request_error_logs.id DESC
-          LIMIT @limit
-        `,
-      )
-      .all({ limit: normalizedLimit }) as RequestErrorRecord[];
+  async list(limit?: number): Promise<RequestErrorResponse[]> {
+    const rows = await this.errorsRepo
+      .createQueryBuilder('e')
+      .leftJoin(UserEntity, 'u', 'u.id = e.user_id')
+      .select('e.id', 'id')
+      .addSelect('e.user_id', 'user_id')
+      .addSelect('u.username', 'username')
+      .addSelect('e.method', 'method')
+      .addSelect('e.path', 'path')
+      .addSelect('e.status_code', 'status_code')
+      .addSelect('e.message', 'message')
+      .addSelect('e.error_name', 'error_name')
+      .addSelect('e.error_body', 'error_body')
+      .addSelect('e.duration_ms', 'duration_ms')
+      .addSelect('e.created_at', 'created_at')
+      .orderBy('e.created_at', 'DESC')
+      .addOrderBy('e.id', 'DESC')
+      .limit(normalizeMonitoringLimit(limit))
+      .getRawMany<RequestErrorRecord>();
 
     return rows.map((row) => this.mapRow(row));
   }
 
-  private purgeOlderThanRetention(): void {
+  private async purgeOlderThanRetention(): Promise<void> {
     const cutoff = new Date(Date.now() - RETENTION_MS).toISOString();
-    this.databaseService.connection
-      .prepare(
-        `
-          DELETE FROM request_error_logs
-          WHERE created_at < @cutoff
-        `,
-      )
-      .run({ cutoff });
+    await this.errorsRepo.delete({ created_at: LessThan(cutoff) });
   }
 
   private mapRow(row: RequestErrorRecord): RequestErrorResponse {

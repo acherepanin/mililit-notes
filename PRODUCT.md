@@ -22,6 +22,8 @@ Calm, modern, clear.
 
 The interface should feel reliable, premium, and alive enough to be pleasant to open. It should be understandable for a broad audience, not tuned only for technical users. Working screens should stay quiet and task-focused; public marketing, pricing, and landing surfaces can carry more emotion, motion, and conversion energy.
 
+The current expression is a single blue "trust" identity (no teal or amber brand accent) across three themes: `dark` (deep blue-graphite), `light` (cool paper), and `system` (follows the OS). The sidebar and workspace are transparent glass panels with no fill or backdrop blur, sitting over a subtle, low-contrast SVG "space" relief (faint orbits, a quiet grid, scattered points) tinted toward the blue accent. This texture must stay quiet background atmosphere; it is not decorative orbs, neon, or glow, and it must never compete with reading, writing, or scanning.
+
 ## Anti-references
 
 Avoid dry corporate admin templates that make the product feel generic or under-designed.

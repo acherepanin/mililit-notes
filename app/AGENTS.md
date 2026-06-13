@@ -6,16 +6,16 @@
 
 `Notes` - TypeScript-приложение заметок:
 
-- backend: NestJS, REST API, SQLite, Bearer token auth, роли `user` и `admin`;
+- backend: NestJS, REST API, PostgreSQL через TypeORM, Bearer token auth, роли `user` и `admin`;
 - frontend: React + Vite, Tiptap editor, дерево заметок, админ-панель, RU/EN, light/dark themes;
 - production: frontend собирается в `app/back/public`, backend отдает API и статические файлы;
-- deployment: Dockerfile, Docker Compose и SSH deploy-скрипт находятся в `app/vm`.
+- deployment: Dockerfile, dev/prod Docker Compose и SSH deploy-скрипт находятся в `app/deploy`; публикация образа в GHCR — `.github/workflows`.
 
 ## Директории
 
 - `back` - NestJS backend.
 - `front` - React frontend.
-- `vm` - Docker Compose, env-файлы и deploy-скрипт.
+- `deploy` - Dockerfile, dev/prod Docker Compose, deploy-скрипт и env деплоя.
 - `docs` - актуальная документация.
 - `docs/images` - единственное место для изображений документации.
 - `back/.env` - tracked dev env-файл backend с локальными значениями.
@@ -27,9 +27,9 @@
 - [README.md](../README.md) - обзор и быстрый старт.
 - [docs/functionality.md](./docs/functionality.md) - пользовательский функционал, роли, админка, редактор, hotkeys.
 - [docs/api.md](./docs/api.md) - REST API, DTO, ошибки, cURL.
-- [docs/architecture.md](./docs/architecture.md) - модули, сервисы, SQLite-схема, frontend-структура.
+- [docs/architecture.md](./docs/architecture.md) - модули, сервисы, схема БД (PostgreSQL/TypeORM), frontend-структура.
 - [docs/ui.md](./docs/ui.md) - UI-компоненты, tooltip/select/modal/toast правила, запрет native UI там, где есть кастомные компоненты.
-- [docs/deployment.md](./docs/deployment.md) - локальный запуск, Docker, Compose, VM deploy, backup, переменные окружения и production hardening.
+- [docs/deployment.md](./docs/deployment.md) - локальный запуск, Docker, Compose, удалённый deploy, backup, переменные окружения и production hardening.
 - [docs/bot_setup.md](./docs/bot_setup.md) - настройка Telegram/VK ботов и привязка аккаунтов.
 
 ## Проверки
@@ -88,9 +88,9 @@ npm run build
 - После любого добавления, удаления или изменения функционала проверять стартовый prompt Notes AI и при необходимости актуализировать его. В prompt должны подробно отражаться актуальные API, UI-возможности, правила работы с данными, доступные tool-calls и ограничения, к которым бот должен иметь доступ. Удаленный или легаси-функционал из prompt убирать, чтобы бот не опирался на несуществующие возможности.
 - Имена файлов документации писать нижним регистром, кроме `README.md`, `AGENTS.md`.
 - Любые изображения для документации класть только в `docs/images`.
-- `back/.env` должен оставаться доступным для git; не добавлять его обратно в `.gitignore`.
-- Не коммитить реальные production-секреты из `vm/.env`.
-- SQLite-файлы (`*.sqlite`, `*.sqlite-wal`, `*.sqlite-shm`) являются runtime-данными, а не исходниками.
+- `back/.env`, `back/.env.dev`, `back/.env.prod` должны оставаться доступными для git; не добавлять их в `.gitignore` (они запекаются в образ).
+- В `deploy/.env` держать тестовые/плейсхолдер-значения; реальные production-секреты не коммитить.
+- Данные PostgreSQL и загруженные файлы — runtime-данные (Docker volumes), а не исходники.
 - Generated/test state вроде `test-results` не хранить в git.
 - UI должен оставаться компактным, кастомным, локализованным и без native `alert`, `prompt`, `confirm`.
 - Ошибки на frontend выводить через toast-alerting.

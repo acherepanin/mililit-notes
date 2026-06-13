@@ -28,7 +28,8 @@
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ApiError, aiApi } from '../../api';
+import { aiApi } from '../../api';
+import { resolveApiError } from '../../utils/apiErrors';
 import { CustomSelect, type SelectOption } from '../../components/CustomSelect';
 import { IconButton } from '../../components/IconButton';
 import { PasswordVisibilityToggle } from '../../components/PasswordInputActions';
@@ -306,8 +307,8 @@ export function AiAssistant({
       const nextSettings = await aiApi.updateSettings({ providerName, baseUrl });
       onSettingsChange(nextSettings);
       setDraft(createDraft(nextSettings));
-    } catch {
-      pushToast('error', t('aiSaveError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'aiSaveError', { preferServerMessage: true }));
     } finally {
       setIsBusy(false);
     }
@@ -348,8 +349,8 @@ export function AiAssistant({
   const loadBotSettings = useCallback(async () => {
     try {
       setBotSettings(await aiApi.listBotUserSettings());
-    } catch {
-      pushToast('error', t('aiBotsLoadError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'aiBotsLoadError'));
     }
   }, [pushToast, t]);
 
@@ -357,8 +358,8 @@ export function AiAssistant({
     setIsMonthlyUsageLoading(true);
     try {
       setMonthlyUsage(await aiApi.getMonthlyUsage());
-    } catch {
-      pushToast('error', t('aiUsageLoadError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'aiUsageLoadError'));
     } finally {
       setIsMonthlyUsageLoading(false);
     }
@@ -434,15 +435,18 @@ export function AiAssistant({
           setDraft(createDraft(syncedSettings));
           pushToast('success', t('aiModelsSynced'));
           return;
-        } catch {
-          pushToast('error', t('aiConnectionError'));
+        } catch (error) {
+          pushToast(
+            'error',
+            resolveApiError(error, t, 'aiConnectionError', { preferServerMessage: true }),
+          );
         }
       }
 
       onSettingsChange(nextSettings);
       setDraft(createDraft(nextSettings));
-    } catch {
-      pushToast('error', t('aiSaveError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'aiSaveError', { preferServerMessage: true }));
     }
   };
 
@@ -451,8 +455,8 @@ export function AiAssistant({
       const nextSettings = await aiApi.updateSettings({ clearApiKey: true });
       onSettingsChange(nextSettings);
       pushToast('success', t('saved'));
-    } catch {
-      pushToast('error', t('aiSaveError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'aiSaveError', { preferServerMessage: true }));
     }
   };
 
@@ -469,8 +473,8 @@ export function AiAssistant({
       onSettingsChange(nextSettings);
       setDraft(createDraft(nextSettings));
       pushToast('success', t('saved'));
-    } catch {
-      pushToast('error', t('aiSaveError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'aiSaveError', { preferServerMessage: true }));
     } finally {
       setIsBusy(false);
     }
@@ -482,8 +486,11 @@ export function AiAssistant({
       const nextSettings = await aiApi.syncModels();
       onSettingsChange(nextSettings);
       pushToast('success', t('aiModelsSynced'));
-    } catch {
-      pushToast('error', t('aiConnectionError'));
+    } catch (error) {
+      pushToast(
+        'error',
+        resolveApiError(error, t, 'aiConnectionError', { preferServerMessage: true }),
+      );
     } finally {
       setIsBusy(false);
     }
@@ -496,8 +503,11 @@ export function AiAssistant({
       const nextSettings = await aiApi.getSettings();
       onSettingsChange(nextSettings);
       pushToast('success', t('aiConnectionOk'));
-    } catch {
-      pushToast('error', t('aiConnectionError'));
+    } catch (error) {
+      pushToast(
+        'error',
+        resolveApiError(error, t, 'aiConnectionError', { preferServerMessage: true }),
+      );
     } finally {
       setIsBusy(false);
     }
@@ -525,8 +535,8 @@ export function AiAssistant({
           : [...current, merged];
       });
       pushToast('success', t('saved'));
-    } catch {
-      pushToast('error', t('aiBotsSaveError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'aiBotsSaveError', { preferServerMessage: true }));
     } finally {
       setIsBusy(false);
     }
@@ -538,8 +548,8 @@ export function AiAssistant({
       const code = await aiApi.createBotLinkCode(provider);
       setBotLinkCodes((current) => ({ ...current, [provider]: code }));
       pushToast('success', t('aiBotCodeCreated'));
-    } catch {
-      pushToast('error', t('aiBotCodeError'));
+    } catch (error) {
+      pushToast('error', resolveApiError(error, t, 'aiBotCodeError'));
     } finally {
       setIsBusy(false);
     }
@@ -664,7 +674,7 @@ export function AiAssistant({
         return;
       }
 
-      const message = caught instanceof ApiError ? caught.message : t('aiChatError');
+      const message = resolveApiError(caught, t, 'aiChatError', { preferServerMessage: true });
       setMessages((current) => [
         ...current,
         { role: 'assistant', content: message, visualStatus: 'error' },
@@ -699,7 +709,7 @@ export function AiAssistant({
       ]);
       pushToast('success', t('aiActionCompleted'));
     } catch (caught) {
-      const message = caught instanceof ApiError ? caught.message : t('aiChatError');
+      const message = resolveApiError(caught, t, 'aiChatError', { preferServerMessage: true });
       setMessages((current) => [
         ...current,
         { role: 'assistant', content: message, visualStatus: 'error' },

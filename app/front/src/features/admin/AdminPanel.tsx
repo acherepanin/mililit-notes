@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NavLink, Navigate, useParams } from 'react-router-dom';
 
 import { adminApi } from '../../api';
-import { useConfirmDelete } from '../../components/DeleteConfirmationProvider';
+import { useConfirmDelete } from '../../components/deleteConfirmation';
 import { EmptyState } from '../../components/EmptyState';
 import { IconButton } from '../../components/IconButton';
 import type { Translator } from '../../i18n';
@@ -80,38 +80,39 @@ export function AdminPanel({
     ],
     [t],
   );
-  const loadAdminData = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const [nextUsers, nextStats, nextPlans] = await Promise.all([
-        adminApi.listUsers(),
-        adminApi.getStats(activityRange),
-        adminApi.listSubscriptionPlans(),
-      ]);
-      setUsers(nextUsers);
-      setPlans(nextPlans);
-      setStats(nextStats);
-      setDrafts(
-        Object.fromEntries(
-          nextUsers.map((user) => [
-            user.id,
-            {
-              role: user.role,
-              password: '',
-            },
-          ]),
-        ),
-      );
-    } catch {
-      onError(t('adminLoadError'));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [activityRange, onError, t]);
+  const [reloadKey, setReloadKey] = useState(0);
+  // Перезагрузка данных админки: триггерит эффект ниже, увеличивая ключ.
+  const reloadAdminData = () => setReloadKey((current) => current + 1);
 
   useEffect(() => {
-    void loadAdminData();
-  }, [loadAdminData]);
+    let cancelled = false;
+    setIsLoading(true);
+    void (async () => {
+      try {
+        const [nextUsers, nextStats, nextPlans] = await Promise.all([
+          adminApi.listUsers(),
+          adminApi.getStats(activityRange),
+          adminApi.listSubscriptionPlans(),
+        ]);
+        if (cancelled) return;
+        setUsers(nextUsers);
+        setPlans(nextPlans);
+        setStats(nextStats);
+        setDrafts(
+          Object.fromEntries(
+            nextUsers.map((user) => [user.id, { role: user.role, password: '' }]),
+          ),
+        );
+      } catch {
+        if (!cancelled) onError(t('adminLoadError'));
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activityRange, reloadKey, onError, t]);
 
   const createUser = () => {
     if (!createForm.username.trim() || !createForm.email.trim() || !createForm.password.trim()) {
@@ -129,7 +130,7 @@ export function AdminPanel({
         setCreateForm(emptyCreateForm);
         setIsCreateOpen(false);
         onSuccess(t('adminUserSaved'));
-        return loadAdminData();
+        reloadAdminData();
       })
       .catch(() => onError(t('adminSaveError')));
   };
@@ -150,7 +151,7 @@ export function AdminPanel({
       .updateUser(userId, payload)
       .then(() => {
         onSuccess(t('adminUserSaved'));
-        return loadAdminData();
+        reloadAdminData();
       })
       .catch(() => onError(t('adminSaveError')));
   };
@@ -171,7 +172,7 @@ export function AdminPanel({
       .deleteUser(userId)
       .then(() => {
         onSuccess(t('adminUserDeleted'));
-        return loadAdminData();
+        reloadAdminData();
       })
       .catch(() => onError(t('adminDeleteError')));
   };
@@ -219,7 +220,7 @@ export function AdminPanel({
                   setMonitoringReloadKey((current) => current + 1);
                   return;
                 }
-                void loadAdminData();
+                reloadAdminData();
               }}
               disabled={isLoading}
             />

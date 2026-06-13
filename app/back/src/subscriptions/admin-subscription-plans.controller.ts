@@ -16,34 +16,38 @@ import { AdminGuard } from '../auth/admin.guard';
 import { type AuthenticatedRequest } from '../auth/auth.guard';
 import { CreateSubscriptionPlanDto } from './dto/create-subscription-plan.dto';
 import { UpdateSubscriptionPlanDto } from './dto/update-subscription-plan.dto';
+import { SubscriptionPlansService } from './subscription-plans.service';
 import { SubscriptionsService } from './subscriptions.service';
 import type { SubscriptionPlanResponse, UserSubscriptionResponse } from './subscriptions.types';
 
 @Controller('admin/subscription-plans')
 @UseGuards(AdminGuard)
 export class AdminSubscriptionPlansController {
-  constructor(@Inject(SubscriptionsService) private readonly subscriptionsService: SubscriptionsService) {}
+  constructor(
+    @Inject(SubscriptionsService) private readonly subscriptionsService: SubscriptionsService,
+    @Inject(SubscriptionPlansService) private readonly plansService: SubscriptionPlansService,
+  ) {}
 
   @Get()
-  list(): SubscriptionPlanResponse[] {
-    return this.subscriptionsService.listAllPlans();
+  list(): Promise<SubscriptionPlanResponse[]> {
+    return this.plansService.listAllPlans();
   }
 
   @Post()
-  create(@Body() dto: CreateSubscriptionPlanDto): SubscriptionPlanResponse {
-    return this.subscriptionsService.createPlan(dto);
+  create(@Body() dto: CreateSubscriptionPlanDto): Promise<SubscriptionPlanResponse> {
+    return this.plansService.createPlan(dto);
   }
 
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateSubscriptionPlanDto,
-  ): SubscriptionPlanResponse {
-    return this.subscriptionsService.updatePlan(id, dto);
+  ): Promise<SubscriptionPlanResponse> {
+    return this.plansService.updatePlan(id, dto);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number): { id: number } {
+  remove(@Param('id', ParseIntPipe) id: number): Promise<{ id: number }> {
     return this.subscriptionsService.deletePlan(id);
   }
 
@@ -52,7 +56,7 @@ export class AdminSubscriptionPlansController {
     @Req() request: AuthenticatedRequest,
     @Param('userId', ParseIntPipe) userId: number,
     @Body() body: { planId: number },
-  ): UserSubscriptionResponse {
+  ): Promise<UserSubscriptionResponse> {
     return this.subscriptionsService.assignPlanToUser(
       userId,
       body.planId,

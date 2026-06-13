@@ -4,11 +4,12 @@ import type { DragEvent, MouseEvent, PointerEvent as ReactPointerEvent } from 'r
 
 import { notesApi, workspaceApi } from '../../api';
 import { EmptyState } from '../../components/EmptyState';
-import { useConfirmDelete } from '../../components/DeleteConfirmationProvider';
+import { useConfirmDelete } from '../../components/deleteConfirmation';
 import { IconButton } from '../../components/IconButton';
 import { TooltipText } from '../../components/TooltipText';
 import type { Translator } from '../../i18n';
 import type { Attachment, AttachmentFolder, Note, NoteDraft, NoteTreeNode } from '../../types';
+import { resolveApiErrorText } from '../../utils/apiErrors';
 import { AttachmentPreviewOverlay } from './AttachmentOverlays';
 import {
   FileManagerContextMenu,
@@ -38,7 +39,6 @@ import {
 import {
   clampPreviewFrame,
   fileToBase64,
-  FolderTileIcon,
   getAttachmentIcon,
   getFileExtension,
   getPreviewKind,
@@ -47,6 +47,7 @@ import {
   type PreviewInteraction,
   saveBlob,
 } from './attachmentsPanel.helpers';
+import { FolderTileIcon } from './FolderTileIcon';
 
 interface PanelProps {
   t: Translator;
@@ -71,12 +72,13 @@ async function runTool(
   onError: (message: string) => void,
   successMessage: string,
   errorMessage: string,
+  t?: Translator,
 ) {
   try {
     await action();
     onSuccess(successMessage);
-  } catch {
-    onError(errorMessage);
+  } catch (caught) {
+    onError(t ? resolveApiErrorText(caught, t, errorMessage) : errorMessage);
   }
 }
 
@@ -177,7 +179,11 @@ export function AttachmentsPanel({
   }, [refresh]);
 
   useEffect(() => {
-    clearSelection();
+    // Сброс выбора и состояния при смене области/заметки (только сеттеры).
+    setSelectedAttachmentIds(new Set());
+    setSelectedFolderIds(new Set());
+    setLastSelectedKey(null);
+    setContextMenu(null);
     setCurrentFolderId(null);
     setClipboard(null);
     setPreviewFrame(null);
@@ -318,12 +324,12 @@ export function AttachmentsPanel({
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [editingAttachmentId, editingFolderId]);
 
-  const clearSelection = useCallback(() => {
+  const clearSelection = () => {
     setSelectedAttachmentIds(new Set());
     setSelectedFolderIds(new Set());
     setLastSelectedKey(null);
     setContextMenu(null);
-  }, []);
+  };
 
   const selectGridItem = (
     key: GridSelectionKey,
@@ -370,26 +376,27 @@ export function AttachmentsPanel({
     setContextMenu(null);
   };
 
-  const moveItems = async (
-    attachmentIds: number[],
-    folderIds: number[],
-    targetFolderId: number | null,
-  ) => {
-    for (const folderId of folderIds) {
-      try {
-        await workspaceApi.moveAttachmentFolderParent(folderId, targetFolderId);
-      } catch {
-        onError(t('folderNameConflict'));
-        return;
+  const moveItems = useCallback(
+    async (attachmentIds: number[], folderIds: number[], targetFolderId: number | null) => {
+      for (const folderId of folderIds) {
+        try {
+          await workspaceApi.moveAttachmentFolderParent(folderId, targetFolderId);
+        } catch {
+          onError(t('folderNameConflict'));
+          return;
+        }
       }
-    }
-    for (const attachmentId of attachmentIds) {
-      await workspaceApi.moveAttachmentToFolder(attachmentId, targetFolderId);
-    }
-    setContextMenu(null);
-    clearSelection();
-    await refresh();
-  };
+      for (const attachmentId of attachmentIds) {
+        await workspaceApi.moveAttachmentToFolder(attachmentId, targetFolderId);
+      }
+      setContextMenu(null);
+      setSelectedAttachmentIds(new Set());
+      setSelectedFolderIds(new Set());
+      setLastSelectedKey(null);
+      await refresh();
+    },
+    [onError, refresh, t],
+  );
 
   const pasteClipboard = useCallback(async () => {
     if (!clipboard || !isAccountScope) {
@@ -416,7 +423,7 @@ export function AttachmentsPanel({
     }
     setContextMenu(null);
     await refresh();
-  }, [attachments, clipboard, currentFolderId, folders, isAccountScope]);
+  }, [attachments, clipboard, currentFolderId, folders, isAccountScope, moveItems, refresh]);
 
   useEffect(() => {
     const onPointerMove = (event: globalThis.PointerEvent) => {
@@ -476,7 +483,7 @@ export function AttachmentsPanel({
       if (!isAccountScope || totalSelected === 0) {
         if (isAccountScope && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v' && clipboard) {
           event.preventDefault();
-          void runTool(() => pasteClipboard(), onSuccess, onError, t('saved'), t('saveError'));
+          void runTool(() => pasteClipboard(), onSuccess, onError, t('saved'), t('saveError'), t);
         }
         return;
       }
@@ -500,7 +507,7 @@ export function AttachmentsPanel({
         });
       } else if (key === 'v' && clipboard) {
         event.preventDefault();
-        void runTool(() => pasteClipboard(), onSuccess, onError, t('saved'), t('saveError'));
+        void runTool(() => pasteClipboard(), onSuccess, onError, t('saved'), t('saveError'), t);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -784,7 +791,7 @@ export function AttachmentsPanel({
     }
     const files = Array.from(event.dataTransfer.files);
     if (!files.length) return;
-    void runTool(() => uploadFiles(files), onSuccess, onError, t('saved'), t('saveError'));
+    void runTool(() => uploadFiles(files), onSuccess, onError, t('saved'), t('saveError'), t);
   };
 
   const startGridMarquee = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1036,7 +1043,7 @@ export function AttachmentsPanel({
           const files = Array.from(event.currentTarget.files ?? []);
           event.currentTarget.value = '';
           if (!files.length) return;
-          void runTool(() => uploadFiles(files), onSuccess, onError, t('saved'), t('saveError'));
+          void runTool(() => uploadFiles(files), onSuccess, onError, t('saved'), t('saveError'), t);
         }}
       />
 
@@ -1087,7 +1094,7 @@ export function AttachmentsPanel({
           <IconButton
             label={t('refresh')}
             icon={<RefreshCw size={16} />}
-            onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'))}
+            onClick={() => runTool(refresh, onSuccess, onError, t('ready'), t('loadError'), t)}
           />
         </div>
       </div>
@@ -1282,7 +1289,7 @@ export function AttachmentsPanel({
               })
             }
             onDownload={(attachment) =>
-              runTool(() => downloadFile(attachment), onSuccess, onError, t('ready'), t('loadError'))
+              runTool(() => downloadFile(attachment), onSuccess, onError, t('ready'), t('loadError'), t)
             }
             onPointerDown={(event) => {
               if (
@@ -1329,10 +1336,10 @@ export function AttachmentsPanel({
         t={t}
         onClose={() => setContextMenu(null)}
         onOpenPreview={(attachment) =>
-          runTool(() => openPreview(attachment), onSuccess, onError, t('ready'), t('loadError'))
+          runTool(() => openPreview(attachment), onSuccess, onError, t('ready'), t('loadError'), t)
         }
         onOpenBrowser={(attachment) =>
-          runTool(() => openInBrowser(attachment), onSuccess, onError, t('ready'), t('loadError'))
+          runTool(() => openInBrowser(attachment), onSuccess, onError, t('ready'), t('loadError'), t)
         }
         onRenameAttachment={beginRenameAttachment}
         onRenameFolder={beginRenameFolder}
@@ -1378,7 +1385,7 @@ export function AttachmentsPanel({
           )
         }
         onAttachToNote={(ids, noteId) =>
-          runTool(() => attachToNote(ids, noteId), onSuccess, onError, t('saved'), t('saveError'))
+          runTool(() => attachToNote(ids, noteId), onSuccess, onError, t('saved'), t('saveError'), t)
         }
         onMoveItems={(attachmentIds, folderIds, targetFolderId) =>
           runTool(
@@ -1404,7 +1411,7 @@ export function AttachmentsPanel({
           })
         }
         onPaste={() =>
-          runTool(() => pasteClipboard(), onSuccess, onError, t('saved'), t('saveError'))
+          runTool(() => pasteClipboard(), onSuccess, onError, t('saved'), t('saveError'), t)
         }
         onUpload={() => {
           setContextMenu(null);

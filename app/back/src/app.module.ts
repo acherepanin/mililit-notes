@@ -1,10 +1,13 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { join } from 'node:path';
 
 import { AdminModule } from './admin/admin.module';
 import { AiModule } from './ai/ai.module';
+import { resolveEnvFilePaths } from './config/env-files';
+import { buildTypeOrmOptions } from './database/typeorm.config';
 import { HealthController } from './health.controller';
 import { AuthModule } from './auth/auth.module';
 import { DatabaseModule } from './infra/database.module';
@@ -17,6 +20,11 @@ import { WorkspaceModule } from './workspace/workspace.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: resolveEnvFilePaths(),
+    }),
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) => buildTypeOrmOptions(configService),
     }),
     ServeStaticModule.forRoot({
       rootPath: join(process.cwd(), 'public'),

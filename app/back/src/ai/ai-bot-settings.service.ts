@@ -1,8 +1,15 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'node:crypto';
+import { DataSource, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
-import { DatabaseService } from '../infra/database.service';
+import { nowIso } from '../database/db.util';
+import {
+  AiBotAdminSettingsEntity,
+  AiBotLinkCodeEntity,
+  AiBotUserSettingsEntity,
+} from '../database/entities/ai-bot.entity';
 import { AiCryptoService } from './ai-crypto.service';
 import type { UpdateAiBotAdminSettingsDto } from './dto/update-ai-bot-admin-settings.dto';
 import type { UpdateAiBotUserSettingsDto } from './dto/update-ai-bot-user-settings.dto';
@@ -25,96 +32,59 @@ const linkCodeMaxAttempts = 10;
 @Injectable()
 export class AiBotSettingsService {
   constructor(
-    @Inject(DatabaseService) private readonly databaseService: DatabaseService,
+    @InjectRepository(AiBotAdminSettingsEntity)
+    private readonly adminRepo: Repository<AiBotAdminSettingsEntity>,
+    @InjectRepository(AiBotUserSettingsEntity)
+    private readonly userRepo: Repository<AiBotUserSettingsEntity>,
+    @InjectRepository(AiBotLinkCodeEntity)
+    private readonly linkCodesRepo: Repository<AiBotLinkCodeEntity>,
+    @InjectDataSource() private readonly dataSource: DataSource,
     @Inject(AiCryptoService) private readonly aiCryptoService: AiCryptoService,
     @Inject(ActivityService) private readonly activityService: ActivityService,
   ) {}
 
-  listAdminSettings(): AiBotAdminSettingsResponse[] {
-    return botProviders.map((provider) =>
-      this.mapAdminSettings(this.ensureAdminSettings(provider)),
-    );
+  async listAdminSettings(): Promise<AiBotAdminSettingsResponse[]> {
+    const rows = await Promise.all(botProviders.map((provider) => this.ensureAdminSettings(provider)));
+    return rows.map((row) => this.mapAdminSettings(row));
   }
 
-  updateAdminSettings(
+  async updateAdminSettings(
     actorId: number,
     provider: string,
     dto: UpdateAiBotAdminSettingsDto,
-  ): AiBotAdminSettingsResponse {
+  ): Promise<AiBotAdminSettingsResponse> {
     const botProvider = this.normalizeProvider(provider);
-    const current = this.ensureAdminSettings(botProvider);
-    const updates: Record<string, unknown> = {
-      provider: botProvider,
+    const current = await this.ensureAdminSettings(botProvider);
+    const updates: Partial<AiBotAdminSettingsEntity> = {
       enabled: dto.enabled === undefined ? current.enabled : dto.enabled ? 1 : 0,
-      webhookUrl:
+      webhook_url:
         dto.webhookUrl === undefined ? current.webhook_url : this.normalizeNullable(dto.webhookUrl),
-      groupId: dto.groupId === undefined ? current.group_id : this.normalizeNullable(dto.groupId),
-      confirmationCode:
+      group_id: dto.groupId === undefined ? current.group_id : this.normalizeNullable(dto.groupId),
+      confirmation_code:
         dto.confirmationCode === undefined
           ? current.confirmation_code
           : this.normalizeNullable(dto.confirmationCode),
-      allowSecrets:
+      allow_secrets:
         dto.allowSecrets === undefined ? current.allow_secrets : dto.allowSecrets ? 1 : 0,
-      requireConfirmation:
+      require_confirmation:
         dto.requireConfirmation === undefined
           ? current.require_confirmation
           : dto.requireConfirmation
             ? 1
             : 0,
-      dailyRequestLimit: this.normalizeLimit(dto.dailyRequestLimit, current.daily_request_limit),
-      dailyReadLimit: this.normalizeLimit(dto.dailyReadLimit, current.daily_read_limit),
-      dailyWriteLimit: this.normalizeLimit(dto.dailyWriteLimit, current.daily_write_limit),
-      now: new Date().toISOString(),
+      daily_request_limit: this.normalizeLimit(dto.dailyRequestLimit, current.daily_request_limit),
+      daily_read_limit: this.normalizeLimit(dto.dailyReadLimit, current.daily_read_limit),
+      daily_write_limit: this.normalizeLimit(dto.dailyWriteLimit, current.daily_write_limit),
+      updated_at: nowIso(),
     };
-    const assignments = [
-      'enabled = @enabled',
-      'webhook_url = @webhookUrl',
-      'group_id = @groupId',
-      'confirmation_code = @confirmationCode',
-      'allow_secrets = @allowSecrets',
-      'require_confirmation = @requireConfirmation',
-      'daily_request_limit = @dailyRequestLimit',
-      'daily_read_limit = @dailyReadLimit',
-      'daily_write_limit = @dailyWriteLimit',
-      'updated_at = @now',
-    ];
 
-    this.applySecretUpdate(
-      assignments,
-      updates,
-      'bot_token',
-      'botTokenEncrypted',
-      dto.botToken,
-      dto.clearBotToken,
-    );
-    this.applySecretUpdate(
-      assignments,
-      updates,
-      'access_token',
-      'accessTokenEncrypted',
-      dto.accessToken,
-      dto.clearAccessToken,
-    );
-    this.applySecretUpdate(
-      assignments,
-      updates,
-      'secret',
-      'secretEncrypted',
-      dto.secret,
-      dto.clearSecret,
-    );
+    this.applySecretUpdate(updates, 'bot_token_encrypted', dto.botToken, dto.clearBotToken);
+    this.applySecretUpdate(updates, 'access_token_encrypted', dto.accessToken, dto.clearAccessToken);
+    this.applySecretUpdate(updates, 'secret_encrypted', dto.secret, dto.clearSecret);
 
-    this.databaseService.connection
-      .prepare(
-        `
-          UPDATE ai_bot_admin_settings
-          SET ${assignments.join(', ')}
-          WHERE provider = @provider
-        `,
-      )
-      .run(updates);
+    await this.adminRepo.update({ provider: botProvider }, updates);
 
-    this.activityService.record({
+    await this.activityService.record({
       actorId,
       userId: actorId,
       action: 'ai.bot.settings.update',
@@ -123,7 +93,7 @@ export class AiBotSettingsService {
       details: { provider: botProvider, enabled: Boolean(updates.enabled) },
     });
 
-    return this.mapAdminSettings(this.ensureAdminSettings(botProvider));
+    return this.mapAdminSettings(await this.ensureAdminSettings(botProvider));
   }
 
   async testAdminConnection(
@@ -131,16 +101,16 @@ export class AiBotSettingsService {
     provider: string,
   ): Promise<AiBotConnectionCheckResponse> {
     const botProvider = this.normalizeProvider(provider);
-    const settings = this.ensureAdminSettings(botProvider);
-    const checkedAt = new Date().toISOString();
+    const settings = await this.ensureAdminSettings(botProvider);
+    const checkedAt = nowIso();
 
     try {
       const message =
         botProvider === 'telegram'
           ? await this.testTelegram(settings)
           : await this.testVk(settings);
-      this.updateCheckState(botProvider, checkedAt, 'ok', null);
-      this.activityService.record({
+      await this.updateCheckState(botProvider, checkedAt, 'ok', null);
+      await this.activityService.record({
         actorId,
         userId: actorId,
         action: 'ai.bot.connection.check',
@@ -151,136 +121,94 @@ export class AiBotSettingsService {
       return { ok: true, checkedAt, message };
     } catch (caught) {
       const message = (caught as Error).message.slice(0, 280);
-      this.updateCheckState(botProvider, checkedAt, 'error', message);
+      await this.updateCheckState(botProvider, checkedAt, 'error', message);
       throw new BadRequestException(message);
     }
   }
 
-  listUserSettings(userId: number): AiBotUserSettingsResponse[] {
-    return botProviders.map((provider) =>
-      this.mapUserSettings(this.ensureUserSettings(userId, provider)),
+  async listUserSettings(userId: number): Promise<AiBotUserSettingsResponse[]> {
+    const rows = await Promise.all(
+      botProviders.map((provider) => this.ensureUserSettings(userId, provider)),
     );
+    return rows.map((row) => this.mapUserSettings(row));
   }
 
-  updateUserSettings(
+  async updateUserSettings(
     userId: number,
     provider: string,
     dto: UpdateAiBotUserSettingsDto,
-  ): AiBotUserSettingsResponse {
+  ): Promise<AiBotUserSettingsResponse> {
     const botProvider = this.normalizeProvider(provider);
-    const current = this.ensureUserSettings(userId, botProvider);
+    const current = await this.ensureUserSettings(userId, botProvider);
     const nextAccessMode = dto.accessMode ?? current.access_mode;
-    const nextDailyLimit = this.normalizeLimit(dto.dailyRequestLimit, current.daily_request_limit);
-    const nextDailyReadLimit = this.normalizeLimit(dto.dailyReadLimit, current.daily_read_limit);
-    const nextDailyWriteLimit = this.normalizeLimit(dto.dailyWriteLimit, current.daily_write_limit);
     const permissions = this.mergePermissions(this.mapRowPermissions(current), dto.permissions);
-    const now = new Date().toISOString();
 
-    this.databaseService.connection
-      .prepare(
-        `
-          UPDATE ai_bot_user_settings
-          SET enabled = @enabled,
-              access_mode = @accessMode,
-              allow_secrets = @allowSecrets,
-              allow_note_read = @allowNoteRead,
-              allow_note_write = @allowNoteWrite,
-              allow_note_delete = @allowNoteDelete,
-              allow_tags = @allowTags,
-              allow_templates = @allowTemplates,
-              allow_versions = @allowVersions,
-              allow_attachments = @allowAttachments,
-              allow_share_links = @allowShareLinks,
-              daily_request_limit = @dailyRequestLimit,
-              daily_read_limit = @dailyReadLimit,
-              daily_write_limit = @dailyWriteLimit,
-              updated_at = @now
-          WHERE user_id = @userId AND provider = @provider
-        `,
-      )
-      .run({
-        userId,
-        provider: botProvider,
+    await this.userRepo.update(
+      { user_id: userId, provider: botProvider },
+      {
         enabled: dto.enabled === undefined ? current.enabled : dto.enabled ? 1 : 0,
-        accessMode: nextAccessMode,
-        allowSecrets:
+        access_mode: nextAccessMode,
+        allow_secrets:
           dto.allowSecrets === undefined ? current.allow_secrets : dto.allowSecrets ? 1 : 0,
-        allowNoteRead: permissions.readNotes ? 1 : 0,
-        allowNoteWrite: permissions.writeNotes ? 1 : 0,
-        allowNoteDelete: permissions.deleteNotes ? 1 : 0,
-        allowTags: permissions.manageTags ? 1 : 0,
-        allowTemplates: permissions.useTemplates ? 1 : 0,
-        allowVersions: permissions.useVersions ? 1 : 0,
-        allowAttachments: permissions.listAttachments ? 1 : 0,
-        allowShareLinks: permissions.createShareLinks ? 1 : 0,
-        dailyRequestLimit: nextDailyLimit,
-        dailyReadLimit: nextDailyReadLimit,
-        dailyWriteLimit: nextDailyWriteLimit,
-        now,
-      });
+        allow_note_read: permissions.readNotes ? 1 : 0,
+        allow_note_write: permissions.writeNotes ? 1 : 0,
+        allow_note_delete: permissions.deleteNotes ? 1 : 0,
+        allow_tags: permissions.manageTags ? 1 : 0,
+        allow_templates: permissions.useTemplates ? 1 : 0,
+        allow_versions: permissions.useVersions ? 1 : 0,
+        allow_attachments: permissions.listAttachments ? 1 : 0,
+        allow_share_links: permissions.createShareLinks ? 1 : 0,
+        daily_request_limit: this.normalizeLimit(dto.dailyRequestLimit, current.daily_request_limit),
+        daily_read_limit: this.normalizeLimit(dto.dailyReadLimit, current.daily_read_limit),
+        daily_write_limit: this.normalizeLimit(dto.dailyWriteLimit, current.daily_write_limit),
+        updated_at: nowIso(),
+      },
+    );
 
-    return this.mapUserSettings(this.ensureUserSettings(userId, botProvider));
+    return this.mapUserSettings(await this.ensureUserSettings(userId, botProvider));
   }
 
-  createLinkCode(userId: number, provider: AiBotProvider): AiBotLinkCodeResponse {
+  async createLinkCode(userId: number, provider: AiBotProvider): Promise<AiBotLinkCodeResponse> {
     const botProvider = this.normalizeProvider(provider);
-    const now = new Date().toISOString();
-    const code = this.createUniqueLinkCode(botProvider, now);
+    const now = nowIso();
+    const code = await this.createUniqueLinkCode(botProvider, now);
     const expiresAt = new Date(Date.now() + linkCodeTtlMs).toISOString();
 
-    const transaction = this.databaseService.connection.transaction(() => {
-      this.databaseService.connection
-        .prepare(
-          `
-            DELETE FROM ai_bot_link_codes
-            WHERE (user_id = @userId AND provider = @provider)
-               OR expires_at <= @now
-          `,
-        )
-        .run({ userId, provider: botProvider, now });
-
-      this.databaseService.connection
-        .prepare(
-          `
-            INSERT INTO ai_bot_link_codes (user_id, provider, code_hash, expires_at, created_at)
-            VALUES (@userId, @provider, @codeHash, @expiresAt, @createdAt)
-          `,
-        )
-        .run({
+    await this.dataSource.transaction(async (manager) => {
+      await manager
+        .createQueryBuilder()
+        .delete()
+        .from(AiBotLinkCodeEntity)
+        .where('(user_id = :userId AND provider = :provider) OR expires_at <= :now', {
           userId,
           provider: botProvider,
-          codeHash: this.hashLinkCode(code),
-          expiresAt,
-          createdAt: now,
-        });
-    });
+          now,
+        })
+        .execute();
 
-    transaction();
+      await manager.insert(AiBotLinkCodeEntity, {
+        user_id: userId,
+        provider: botProvider,
+        code_hash: this.hashLinkCode(code),
+        expires_at: expiresAt,
+        created_at: now,
+      });
+    });
 
     return { provider: botProvider, code, expiresAt };
   }
 
-  private createUniqueLinkCode(provider: AiBotProvider, now: string): string {
+  private async createUniqueLinkCode(provider: AiBotProvider, now: string): Promise<string> {
     for (let attempt = 0; attempt < linkCodeMaxAttempts; attempt += 1) {
       const code = this.formatLinkCode(randomBytes(linkCodeBytes).toString('hex').toUpperCase());
-      const existing = this.databaseService.connection
-        .prepare(
-          `
-            SELECT id
-            FROM ai_bot_link_codes
-            WHERE provider = @provider
-              AND code_hash = @codeHash
-              AND expires_at > @now
-            LIMIT 1
-          `,
-        )
-        .get({
-          provider,
-          codeHash: this.hashLinkCode(code),
-          now,
-        }) as { id: number } | undefined;
+      const exists = await this.linkCodesRepo
+        .createQueryBuilder('c')
+        .where('c.provider = :provider', { provider })
+        .andWhere('c.code_hash = :codeHash', { codeHash: this.hashLinkCode(code) })
+        .andWhere('c.expires_at > :now', { now })
+        .getExists();
 
-      if (!existing) {
+      if (!exists) {
         return code;
       }
     }
@@ -292,140 +220,116 @@ export class AiBotSettingsService {
     return value.match(/.{1,4}/g)?.join('-') ?? value;
   }
 
-  getAdminSettings(provider: AiBotProvider): AiBotAdminSettingsRow {
+  getAdminSettings(provider: AiBotProvider): Promise<AiBotAdminSettingsRow> {
     return this.ensureAdminSettings(provider);
   }
 
-  getLinkedUserSettings(provider: AiBotProvider, externalId: string): AiBotUserSettingsRow | null {
-    return (
-      (this.databaseService.connection
-        .prepare(
-          `
-            SELECT *
-            FROM ai_bot_user_settings
-            WHERE provider = @provider AND linked_external_id = @externalId
-            ORDER BY linked_at DESC, id DESC
-            LIMIT 1
-          `,
-        )
-        .get({ provider, externalId }) as AiBotUserSettingsRow | undefined) ?? null
-    );
+  async getLinkedUserSettings(
+    provider: AiBotProvider,
+    externalId: string,
+  ): Promise<AiBotUserSettingsRow | null> {
+    const row = await this.userRepo
+      .createQueryBuilder('s')
+      .where('s.provider = :provider', { provider })
+      .andWhere('s.linked_external_id = :externalId', { externalId })
+      .orderBy('s.linked_at', 'DESC')
+      .addOrderBy('s.id', 'DESC')
+      .getOne();
+
+    return (row as unknown as AiBotUserSettingsRow | null) ?? null;
   }
 
-  linkExternalAccount(
+  async linkExternalAccount(
     provider: AiBotProvider,
     code: string,
     externalId: string,
     username: string | null,
-  ): AiBotUserSettingsResponse {
-    const now = new Date().toISOString();
-    const linkedToAnotherUser = this.databaseService.connection
-      .prepare(
-        `
-          SELECT *
-          FROM ai_bot_user_settings
-          WHERE provider = @provider
-            AND linked_external_id = @externalId
-          LIMIT 1
-        `,
-      )
-      .get({ provider, externalId }) as AiBotUserSettingsRow | undefined;
-    const linkCode = this.databaseService.connection
-      .prepare(
-        `
-          SELECT *
-          FROM ai_bot_link_codes
-          WHERE provider = @provider
-            AND code_hash = @codeHash
-            AND expires_at > @now
-          ORDER BY expires_at DESC, id DESC
-          LIMIT 1
-        `,
-      )
-      .get({ provider, codeHash: this.hashLinkCode(code), now }) as
-      | { id: number; user_id: number }
-      | undefined;
+  ): Promise<AiBotUserSettingsResponse> {
+    const now = nowIso();
+    const linkedToAnotherUser = await this.userRepo.findOne({
+      where: { provider, linked_external_id: externalId },
+    });
+    const linkCode = await this.linkCodesRepo
+      .createQueryBuilder('c')
+      .where('c.provider = :provider', { provider })
+      .andWhere('c.code_hash = :codeHash', { codeHash: this.hashLinkCode(code) })
+      .andWhere('c.expires_at > :now', { now })
+      .orderBy('c.expires_at', 'DESC')
+      .addOrderBy('c.id', 'DESC')
+      .getOne();
 
     if (!linkCode) {
-      throw new BadRequestException('Invalid or expired bot link code');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'Invalid or expired bot link code',
+        code: 'BOT_LINK_INVALID',
+      });
     }
 
     if (linkedToAnotherUser && linkedToAnotherUser.user_id !== linkCode.user_id) {
-      throw new BadRequestException('This messenger account is already linked');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'This messenger account is already linked',
+        code: 'BOT_ALREADY_LINKED',
+      });
     }
 
-    this.ensureUserSettings(linkCode.user_id, provider);
-    const transaction = this.databaseService.connection.transaction(() => {
-      this.databaseService.connection
-        .prepare(
-          `
-            UPDATE ai_bot_user_settings
-            SET enabled = 1,
-                linked_external_id = @externalId,
-                linked_username = @username,
-                linked_at = @now,
-                updated_at = @now
-            WHERE user_id = @userId AND provider = @provider
-          `,
-        )
-        .run({ userId: linkCode.user_id, provider, externalId, username, now });
-      this.databaseService.connection
-        .prepare(
-          `
-            DELETE FROM ai_bot_link_codes
-            WHERE user_id = @userId AND provider = @provider
-          `,
-        )
-        .run({ userId: linkCode.user_id, provider });
+    await this.ensureUserSettings(linkCode.user_id, provider);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(
+        AiBotUserSettingsEntity,
+        { user_id: linkCode.user_id, provider },
+        {
+          enabled: 1,
+          linked_external_id: externalId,
+          linked_username: username,
+          linked_at: now,
+          updated_at: now,
+        },
+      );
+      await manager.delete(AiBotLinkCodeEntity, { user_id: linkCode.user_id, provider });
     });
 
-    transaction();
-
-    return this.mapUserSettings(this.ensureUserSettings(linkCode.user_id, provider));
+    return this.mapUserSettings(await this.ensureUserSettings(linkCode.user_id, provider));
   }
 
-  private ensureAdminSettings(provider: AiBotProvider): AiBotAdminSettingsRow {
-    const existing = this.databaseService.connection
-      .prepare('SELECT * FROM ai_bot_admin_settings WHERE provider = ?')
-      .get(provider) as AiBotAdminSettingsRow | undefined;
-
+  private async ensureAdminSettings(provider: AiBotProvider): Promise<AiBotAdminSettingsRow> {
+    const existing = await this.adminRepo.findOne({ where: { provider } });
     if (existing) {
-      return existing;
+      return existing as unknown as AiBotAdminSettingsRow;
     }
 
-    const now = new Date().toISOString();
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO ai_bot_admin_settings (provider, created_at, updated_at)
-          VALUES (@provider, @now, @now)
-        `,
-      )
-      .run({ provider, now });
+    await this.adminRepo
+      .createQueryBuilder()
+      .insert()
+      .into(AiBotAdminSettingsEntity)
+      .values({ provider })
+      .orIgnore()
+      .execute();
 
-    return this.ensureAdminSettings(provider);
+    const created = await this.adminRepo.findOneOrFail({ where: { provider } });
+    return created as unknown as AiBotAdminSettingsRow;
   }
 
-  private ensureUserSettings(userId: number, provider: AiBotProvider): AiBotUserSettingsRow {
-    const existing = this.databaseService.connection
-      .prepare('SELECT * FROM ai_bot_user_settings WHERE user_id = ? AND provider = ?')
-      .get(userId, provider) as AiBotUserSettingsRow | undefined;
-
+  private async ensureUserSettings(
+    userId: number,
+    provider: AiBotProvider,
+  ): Promise<AiBotUserSettingsRow> {
+    const existing = await this.userRepo.findOne({ where: { user_id: userId, provider } });
     if (existing) {
-      return existing;
+      return existing as unknown as AiBotUserSettingsRow;
     }
 
-    const now = new Date().toISOString();
-    this.databaseService.connection
-      .prepare(
-        `
-          INSERT INTO ai_bot_user_settings (user_id, provider, created_at, updated_at)
-          VALUES (@userId, @provider, @now, @now)
-        `,
-      )
-      .run({ userId, provider, now });
+    await this.userRepo
+      .createQueryBuilder()
+      .insert()
+      .into(AiBotUserSettingsEntity)
+      .values({ user_id: userId, provider })
+      .orIgnore()
+      .execute();
 
-    return this.ensureUserSettings(userId, provider);
+    const created = await this.userRepo.findOneOrFail({ where: { user_id: userId, provider } });
+    return created as unknown as AiBotUserSettingsRow;
   }
 
   private mapAdminSettings(row: AiBotAdminSettingsRow): AiBotAdminSettingsResponse {
@@ -508,23 +412,18 @@ export class AiBotSettingsService {
   }
 
   private applySecretUpdate(
-    assignments: string[],
-    updates: Record<string, unknown>,
-    column: 'bot_token' | 'access_token' | 'secret',
-    encryptedKey: 'botTokenEncrypted' | 'accessTokenEncrypted' | 'secretEncrypted',
+    updates: Partial<AiBotAdminSettingsEntity>,
+    column: 'bot_token_encrypted' | 'access_token_encrypted' | 'secret_encrypted',
     value: string | undefined,
     clear: boolean | undefined,
   ): void {
-    const databaseColumn = `${column}_encrypted`;
-
     if (clear) {
-      assignments.push(`${databaseColumn} = NULL`);
+      updates[column] = null;
       return;
     }
 
     if (value?.trim()) {
-      updates[encryptedKey] = this.aiCryptoService.encrypt(value.trim());
-      assignments.push(`${databaseColumn} = @${encryptedKey}`);
+      updates[column] = this.aiCryptoService.encrypt(value.trim());
     }
   }
 
@@ -532,7 +431,11 @@ export class AiBotSettingsService {
     const token = this.aiCryptoService.decrypt(settings.bot_token_encrypted);
 
     if (!token) {
-      throw new BadRequestException('Telegram bot token is not configured');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'Telegram bot token is not configured',
+        code: 'BOT_TOKEN_MISSING',
+      });
     }
 
     const response = await fetch(`https://api.telegram.org/bot${token}/getMe`, {
@@ -555,7 +458,11 @@ export class AiBotSettingsService {
     const token = this.aiCryptoService.decrypt(settings.access_token_encrypted);
 
     if (!token || !settings.group_id) {
-      throw new BadRequestException('VK group id and access token are required');
+      throw new BadRequestException({
+        statusCode: 400,
+        message: 'VK group id and access token are required',
+        code: 'BOT_TOKEN_MISSING',
+      });
     }
 
     const url = new URL('https://api.vk.com/method/groups.getById');
@@ -576,24 +483,21 @@ export class AiBotSettingsService {
     return payload.response[0]?.name ?? 'VK group is available';
   }
 
-  private updateCheckState(
+  private async updateCheckState(
     provider: AiBotProvider,
     checkedAt: string,
     status: 'ok' | 'error',
     error: string | null,
-  ): void {
-    this.databaseService.connection
-      .prepare(
-        `
-          UPDATE ai_bot_admin_settings
-          SET last_check_at = @checkedAt,
-              last_check_status = @status,
-              last_check_error = @error,
-              updated_at = @checkedAt
-          WHERE provider = @provider
-        `,
-      )
-      .run({ provider, checkedAt, status, error });
+  ): Promise<void> {
+    await this.adminRepo.update(
+      { provider },
+      {
+        last_check_at: checkedAt,
+        last_check_status: status,
+        last_check_error: error,
+        updated_at: checkedAt,
+      },
+    );
   }
 
   private normalizeProvider(provider: string): AiBotProvider {
