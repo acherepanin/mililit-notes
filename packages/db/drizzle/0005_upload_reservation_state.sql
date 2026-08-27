@@ -1,0 +1,3 @@
+ALTER TABLE "attachment_uploads" DROP CONSTRAINT "attachment_uploads_status_check";--> statement-breakpoint
+ALTER TABLE "attachment_uploads" ALTER COLUMN "multipart_upload_id" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "attachment_uploads" ADD CONSTRAINT "attachment_uploads_status_check" CHECK ("attachment_uploads"."status" in ('preparing', 'uploading', 'completing', 'completed', 'aborted', 'failed'));

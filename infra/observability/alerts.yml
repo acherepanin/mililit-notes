@@ -1,0 +1,32 @@
+groups:
+  - name: notes-runtime
+    rules:
+      - alert: NotesTargetDown
+        expr: up{job=~"notes-(api|worker)"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Notes AI scrape target is unavailable
+
+      - alert: NotesApiHighErrorRatio
+        expr: |
+          (
+            sum(rate(notes_api_http_requests_total{status_class="5xx"}[5m]))
+            /
+            clamp_min(sum(rate(notes_api_http_requests_total[5m])), 0.001)
+          ) > 0.05
+          and sum(increase(notes_api_http_requests_total[5m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Notes AI API 5xx ratio exceeds 5 percent
+
+      - alert: NotesWorkerJobFailed
+        expr: sum by (queue, job_name) (increase(notes_worker_jobs_total{job_name!="",result="failure"}[10m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Notes AI background job failed

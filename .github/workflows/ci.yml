@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          run_install: false
+          version: 11.20.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          cache: pnpm
+          node-version: 24
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run workspace checks
+        run: pnpm check
+
+      - name: Generate ephemeral auth secret
+        run: echo "BETTER_AUTH_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Start Compose stack
+        run: >-
+          docker compose -f infra/compose/compose.yml up
+          --build --detach --wait --wait-timeout 180
+
+      - name: Run HTTP smoke checks
+        run: |
+          curl --fail --retry 5 --retry-connrefused http://localhost:3200/
+          curl --fail --retry 5 --retry-connrefused http://localhost:3200/api/health
+          curl --fail --retry 5 --retry-connrefused http://localhost:3201/api/health
+          test "$(curl --fail --silent --retry 5 --retry-connrefused http://localhost:3201/api/auth/get-session)" = "null"
+          curl --fail --retry 5 --retry-connrefused http://localhost:3202/health
+          curl --fail --retry 5 --retry-connrefused http://localhost:3202/ready
+          curl --fail --retry 5 --retry-connrefused http://localhost:18025/readyz
+          curl --fail --retry 5 --retry-connrefused http://localhost:19000/minio/health/live
+
+      - name: Verify database and object storage
+        run: |
+          docker compose -f infra/compose/compose.yml --profile tools run --rm --no-deps db-verify
+          docker compose -f infra/compose/compose.yml --profile tools run --rm --no-deps files-verify
+
+      - name: Print Compose logs on failure
+        if: failure()
+        run: docker compose -f infra/compose/compose.yml logs --no-color --tail 200
+
+      - name: Stop Compose stack
+        if: always()
+        run: docker compose -f infra/compose/compose.yml down --volumes

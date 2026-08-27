@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX "attachment_folders_user_parent_name_unique" ON "attachment_folders" USING btree ("user_id",coalesce("parent_id", 0),lower("name"));--> statement-breakpoint
+CREATE UNIQUE INDEX "attachments_user_folder_name_unique" ON "attachments" USING btree ("user_id",coalesce("folder_id", 0),lower("file_name")) WHERE "attachments"."storage_status" <> 'deleted';

@@ -1,0 +1,20 @@
+global:
+  resolve_timeout: 1m
+  smtp_from: alerts@notes.local
+  smtp_require_tls: false
+  smtp_smarthost: mail:1025
+
+route:
+  receiver: notes-mail
+  group_by: [alertname, job, queue, job_name]
+  group_wait: 1s
+  group_interval: 15s
+  repeat_interval: 12h
+
+receivers:
+  - name: notes-mail
+    email_configs:
+      - to: ops@notes.local
+        send_resolved: true
+        headers:
+          Subject: "[{{ .Status | toUpper }}:{{ len .Alerts }}] Notes AI {{ .CommonLabels.alertname }}"

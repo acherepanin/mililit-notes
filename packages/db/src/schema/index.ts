@@ -1,0 +1,57 @@
+export * from "./ai.js";
+export * from "./auth.js";
+export * from "./billing.js";
+export * from "./identity.js";
+export * from "./operations.js";
+export * from "./sharing.js";
+export * from "./workspace.js";
+
+export const expectedTableNames = [
+  "activity_logs",
+  "auth_accounts",
+  "auth_passkeys",
+  "auth_sessions",
+  "auth_two_factors",
+  "auth_verifications",
+  "data_retention_policies",
+  "ai_audit_logs",
+  "ai_bot_admin_settings",
+  "ai_bot_link_codes",
+  "ai_bot_pending_actions",
+  "ai_bot_usage_logs",
+  "ai_bot_webhook_events",
+  "ai_bot_user_settings",
+  "ai_conversations",
+  "ai_messages",
+  "ai_model_catalog",
+  "ai_model_routes",
+  "ai_note_embeddings",
+  "ai_prompt_definitions",
+  "ai_prompt_eval_cases",
+  "ai_prompt_eval_runs",
+  "ai_prompt_versions",
+  "ai_provider_models",
+  "ai_provider_settings",
+  "ai_tool_calls",
+  "ai_tool_confirmations",
+  "ai_usage_logs",
+  "ai_user_settings",
+  "attachment_folders",
+  "attachment_uploads",
+  "attachments",
+  "note_tags",
+  "note_templates",
+  "note_versions",
+  "notes",
+  "notification_preferences",
+  "pending_registrations",
+  "request_error_logs",
+  "share_link_access_logs",
+  "share_links",
+  "subscription_orders",
+  "subscription_plans",
+  "tags",
+  "user_subscriptions",
+  "user_notifications",
+  "users",
+] as const;

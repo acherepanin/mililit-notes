@@ -1,0 +1,90 @@
+name: notes-v2
+
+services:
+  api:
+    depends_on:
+      alertmanager:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    environment:
+      ALERTMANAGER_URL: http://alertmanager:9093
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      OTEL_SERVICE_NAME: notes-api
+      PROMETHEUS_URL: http://prometheus:9090
+
+  worker:
+    depends_on:
+      otel-collector:
+        condition: service_started
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector:4318/v1/traces
+      OTEL_SERVICE_NAME: notes-worker
+
+  alertmanager:
+    restart: unless-stopped
+    profiles: ["observability"]
+    image: prom/alertmanager:v0.33.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    depends_on:
+      mail:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ALERTMANAGER_PORT:-19093}:9093"
+    volumes:
+      - ../observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - notes-v2-alertmanager:/alertmanager
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/amtool",
+          "--alertmanager.url=http://localhost:9093",
+          "alert",
+          "query",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  otel-collector:
+    restart: unless-stopped
+    profiles: ["observability"]
+    image: otel/opentelemetry-collector-contrib:0.158.0
+    command: ["--config=/etc/otel-collector.yml"]
+    depends_on:
+      tempo:
+        condition: service_started
+    ports:
+      - "127.0.0.1:${OTEL_COLLECTOR_HTTP_PORT:-14318}:4318"
+    volumes:
+      - ../observability/otel-collector.yml:/etc/otel-collector.yml:ro
+
+  tempo-init:
+    profiles: ["observability"]
+    image: busybox:1.37.0
+    command: ["chown", "-R", "10001:10001", "/tmp/tempo"]
+    restart: "no"
+    user: "0:0"
+    volumes:
+      - notes-v2-tempo:/tmp/tempo
+
+  tempo:
+    restart: unless-stopped
+    profiles: ["observability"]
+    image: grafana/tempo:2.9.4
+    command: ["-config.file=/etc/tempo.yml"]
+    depends_on:
+      tempo-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${TEMPO_PORT:-19100}:3200"
+    volumes:
+      - ../observability/tempo.yml:/etc/tempo.yml:ro
+      - notes-v2-tempo:/tmp/tempo
+
+volumes:
+  notes-v2-alertmanager:
+  notes-v2-tempo:

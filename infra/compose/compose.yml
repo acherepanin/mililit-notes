@@ -1,0 +1,357 @@
+name: notes-v2
+
+x-app: &app
+  restart: unless-stopped
+  init: true
+
+x-build: &build
+  context: ../..
+  dockerfile: infra/compose/Dockerfile
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg18-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-notes_v2}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-notes_v2_local_only}
+      POSTGRES_USER: ${POSTGRES_USER:-notes_v2}
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - notes-v2-postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-56379}:6379"
+    volumes:
+      - notes-v2-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  object-storage:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_API_CORS_ALLOW_ORIGIN: ${APP_ORIGIN:-http://localhost:3200}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-notes_v2_local_password}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-notes_v2_local}
+    ports:
+      - "${MINIO_API_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_PORT:-19001}:9001"
+    volumes:
+      - notes-v2-objects:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  object-storage-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      object-storage:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mc alias set local http://object-storage:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        && mc mb --ignore-existing "local/$$OBJECT_STORAGE_BUCKET"
+    environment:
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-notes_v2_local_password}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-notes_v2_local}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-notes-v2}
+    restart: "no"
+
+  mail:
+    image: axllent/mailpit:v1.30.6
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-11025}:1025"
+      - "${MAILPIT_UI_PORT:-18025}:8025"
+    healthcheck:
+      test:
+        ["CMD", "wget", "--quiet", "--spider", "http://localhost:8025/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  prometheus:
+    <<: *app
+    profiles: ["observability"]
+    image: prom/prometheus:v3.13.2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.enable-lifecycle
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-19090}:9090"
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - notes-v2-prometheus:/prometheus
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/promtool",
+          "query",
+          "instant",
+          "http://localhost:9090",
+          "vector(1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    image: notes-v2-db:local
+    build:
+      <<: *build
+      target: db-runtime
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-notes_v2}:${POSTGRES_PASSWORD:-notes_v2_local_only}@postgres:5432/${POSTGRES_DB:-notes_v2}
+    restart: "no"
+
+  db-verify:
+    profiles: ["tools"]
+    image: notes-v2-db:local
+    build:
+      <<: *build
+      target: db-runtime
+    command: ["node", "dist/verify.js"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-notes_v2}:${POSTGRES_PASSWORD:-notes_v2_local_only}@postgres:5432/${POSTGRES_DB:-notes_v2}
+    restart: "no"
+
+  legacy-import:
+    profiles: ["migration"]
+    image: notes-v2-db:local
+    command: ["node", "dist/import-legacy.js"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-notes_v2}:${POSTGRES_PASSWORD:-notes_v2_local_only}@postgres:5432/${POSTGRES_DB:-notes_v2}
+      LEGACY_DATABASE_URL: ${LEGACY_DATABASE_URL:-}
+    restart: "no"
+
+  files-migrate:
+    profiles: ["migration"]
+    image: notes-v2-db:local
+    command: ["node", "dist/migrate-files.js"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      object-storage-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-notes_v2}:${POSTGRES_PASSWORD:-notes_v2_local_only}@postgres:5432/${POSTGRES_DB:-notes_v2}
+      LEGACY_UPLOADS_ROOT: /legacy-uploads
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-notes_v2_local}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-notes-v2}
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-notes_v2_local_password}
+    restart: "no"
+    volumes:
+      - legacy-uploads:/legacy-uploads:ro
+
+  files-verify:
+    profiles: ["tools"]
+    image: notes-v2-db:local
+    command: ["node", "dist/migrate-files.js", "--verify-only"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      object-storage-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-notes_v2}:${POSTGRES_PASSWORD:-notes_v2_local_only}@postgres:5432/${POSTGRES_DB:-notes_v2}
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-notes_v2_local}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-notes-v2}
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-notes_v2_local_password}
+    restart: "no"
+
+  object-backup-verify:
+    profiles: ["tools"]
+    image: notes-v2-db:local
+    build:
+      <<: *build
+      target: db-runtime
+    command: ["node", "dist/verify-object-backup-restore.js"]
+    depends_on:
+      object-storage-init:
+        condition: service_completed_successfully
+    environment:
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-notes_v2_local}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-notes-v2}
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-notes_v2_local_password}
+    restart: "no"
+
+  api:
+    <<: *app
+    build:
+      <<: *build
+      target: api-runtime
+    depends_on:
+      object-storage:
+        condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      AI_PROVIDER_ENCRYPTION_KEY: ${AI_PROVIDER_ENCRYPTION_KEY:-}
+      AI_PROVIDER_ENDPOINT_ALLOWLIST: ${AI_PROVIDER_ENDPOINT_ALLOWLIST:-}
+      AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY:-}
+      ALLOW_MOCK_CHECKOUT: ${ALLOW_MOCK_CHECKOUT:-false}
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3200}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3201}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
+      INTEGRATION_ENCRYPTION_KEY_PREVIOUS: ${INTEGRATION_ENCRYPTION_KEY_PREVIOUS:-}
+      INTEGRATION_LINK_HASH_KEY: ${INTEGRATION_LINK_HASH_KEY:-}
+      INTERNAL_INTEGRATION_SECRET: ${INTERNAL_INTEGRATION_SECRET:?INTERNAL_INTEGRATION_SECRET must be set}
+      INTERNAL_WORKER_HEALTH_URL: http://worker:3002/ready
+      DATABASE_URL: postgresql://${POSTGRES_USER:-notes_v2}:${POSTGRES_PASSWORD:-notes_v2_local_only}@postgres:5432/${POSTGRES_DB:-notes_v2}
+      HOST: 0.0.0.0
+      NODE_ENV: production
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-notes_v2_local}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-notes-v2}
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_PUBLIC_ENDPOINT: ${OBJECT_STORAGE_PUBLIC_ENDPOINT:-http://localhost:19000}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-notes_v2_local_password}
+      PORT: 3001
+      REDIS_URL: redis://redis:6379
+      WEBAUTHN_ORIGIN: ${WEBAUTHN_ORIGIN:-http://localhost:3200}
+      WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-localhost}
+    ports:
+      - "${API_PORT:-3201}:3001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3001/api/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  worker:
+    <<: *app
+    build:
+      <<: *build
+      target: worker-runtime
+    depends_on:
+      mail:
+        condition: service_healthy
+      object-storage:
+        condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-notes_v2}:${POSTGRES_PASSWORD:-notes_v2_local_only}@postgres:5432/${POSTGRES_DB:-notes_v2}
+      HOST: 0.0.0.0
+      INTERNAL_INTEGRATION_SECRET: ${INTERNAL_INTEGRATION_SECRET:?INTERNAL_INTEGRATION_SECRET must be set}
+      INTERNAL_INTEGRATION_URL: http://api:3001/api/internal/integrations/process
+      NODE_ENV: production
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:-notes_v2_local}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-notes-v2}
+      OBJECT_STORAGE_ENDPOINT: http://object-storage:9000
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-notes_v2_local_password}
+      PORT: 3002
+      REDIS_URL: redis://redis:6379
+      SMTP_FROM: ${SMTP_FROM:-Notes AI <no-reply@notes.local>}
+      SMTP_HOST: ${SMTP_HOST:-mail}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+    ports:
+      - "${WORKER_HEALTH_PORT:-3202}:3002"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3002/ready').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  web:
+    <<: *app
+    build:
+      <<: *build
+      target: web-runtime
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      HOSTNAME: 0.0.0.0
+      NOTES_API_URL: http://api:3001
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "${WEB_PORT:-3200}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  legacy-uploads:
+    external: true
+    name: ${LEGACY_UPLOADS_VOLUME:-notes-dev_notes-dev-uploads}
+  notes-v2-objects:
+  notes-v2-postgres:
+  notes-v2-prometheus:
+  notes-v2-redis:

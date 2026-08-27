@@ -1,0 +1,286 @@
+name: notes-ai
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-file: "5"
+    max-size: 10m
+
+x-node-runtime: &node-runtime
+  cap_drop: [ALL]
+  logging: *logging
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 30s
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=64m
+
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+    logging: *logging
+    ports: !reset []
+    shm_size: 256m
+    deploy:
+      resources:
+        limits:
+          cpus: ${POSTGRES_CPU_LIMIT:-2.0}
+          memory: ${POSTGRES_MEMORY_LIMIT:-2G}
+
+  redis:
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    healthcheck:
+      test: ["CMD-SHELL", 'redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+    ports: !reset []
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: ${REDIS_CPU_LIMIT:-0.5}
+          memory: ${REDIS_MEMORY_LIMIT:-512M}
+
+  object-storage:
+    environment:
+      MINIO_API_CORS_ALLOW_ORIGIN: https://${APP_DOMAIN:?APP_DOMAIN must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+    logging: *logging
+    ports: !reset []
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: ${OBJECT_STORAGE_CPU_LIMIT:-1.0}
+          memory: ${OBJECT_STORAGE_MEMORY_LIMIT:-1G}
+
+  object-storage-init:
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set local http://object-storage:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$OBJECT_STORAGE_BUCKET"
+        mc admin user add local "$$MINIO_APP_USER" "$$MINIO_APP_PASSWORD" || true
+        mc admin policy attach local readwrite --user "$$MINIO_APP_USER"
+    environment:
+      MINIO_APP_PASSWORD: ${MINIO_APP_PASSWORD:?MINIO_APP_PASSWORD must be set}
+      MINIO_APP_USER: ${MINIO_APP_USER:?MINIO_APP_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET must be set}
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+
+  mail:
+    profiles: [local-mail]
+    ports: !reset []
+
+  migrate:
+    image: ${NOTES_DB_IMAGE:?NOTES_DB_IMAGE must be an immutable image reference}
+    build: !reset null
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+    logging: *logging
+    security_opt:
+      - no-new-privileges:true
+
+  db-verify:
+    image: ${NOTES_DB_IMAGE:?NOTES_DB_IMAGE must be an immutable image reference}
+    build: !reset null
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+
+  legacy-import:
+    image: ${NOTES_DB_IMAGE:?NOTES_DB_IMAGE must be an immutable image reference}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+
+  files-migrate:
+    image: ${NOTES_DB_IMAGE:?NOTES_DB_IMAGE must be an immutable image reference}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_APP_USER:?MINIO_APP_USER must be set}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET must be set}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_APP_PASSWORD:?MINIO_APP_PASSWORD must be set}
+
+  files-verify:
+    image: ${NOTES_DB_IMAGE:?NOTES_DB_IMAGE must be an immutable image reference}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_APP_USER:?MINIO_APP_USER must be set}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET must be set}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_APP_PASSWORD:?MINIO_APP_PASSWORD must be set}
+
+  object-backup-verify:
+    image: ${NOTES_DB_IMAGE:?NOTES_DB_IMAGE must be an immutable image reference}
+    build: !reset null
+    environment:
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_APP_USER:?MINIO_APP_USER must be set}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET must be set}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_APP_PASSWORD:?MINIO_APP_PASSWORD must be set}
+
+  api:
+    <<: *node-runtime
+    image: ${NOTES_API_IMAGE:?NOTES_API_IMAGE must be an immutable image reference}
+    build: !reset null
+    environment:
+      AI_CREDENTIALS_ENCRYPTION_KEY: ${AI_CREDENTIALS_ENCRYPTION_KEY:-}
+      AI_PROVIDER_ENCRYPTION_KEY: ${AI_PROVIDER_ENCRYPTION_KEY:?AI_PROVIDER_ENCRYPTION_KEY must be set}
+      ALLOW_MOCK_CHECKOUT: "false"
+      APP_ORIGIN: https://${APP_DOMAIN:?APP_DOMAIN must be set}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}
+      BETTER_AUTH_URL: https://${APP_DOMAIN:?APP_DOMAIN must be set}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:?INTEGRATION_ENCRYPTION_KEY must be set}
+      INTEGRATION_LINK_HASH_KEY: ${INTEGRATION_LINK_HASH_KEY:?INTEGRATION_LINK_HASH_KEY must be set}
+      INTERNAL_INTEGRATION_SECRET: ${INTERNAL_INTEGRATION_SECRET:?INTERNAL_INTEGRATION_SECRET must be set}
+      LEGACY_SECRET_ENCRYPTION_KEY: ${LEGACY_SECRET_ENCRYPTION_KEY:-}
+      NOTE_FIELD_ENCRYPTION_KEY: ${NOTE_FIELD_ENCRYPTION_KEY:?NOTE_FIELD_ENCRYPTION_KEY must be set}
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_APP_USER:?MINIO_APP_USER must be set}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET must be set}
+      OBJECT_STORAGE_PUBLIC_ENDPOINT: https://${OBJECT_STORAGE_DOMAIN:?OBJECT_STORAGE_DOMAIN must be set}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_APP_PASSWORD:?MINIO_APP_PASSWORD must be set}
+      OPENAPI_ENABLED: "false"
+      REDIS_URL: ${REDIS_URL:?REDIS_URL must be set}
+      WEBAUTHN_ORIGIN: https://${APP_DOMAIN:?APP_DOMAIN must be set}
+      WEBAUTHN_RP_ID: ${APP_DOMAIN:?APP_DOMAIN must be set}
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: ${API_CPU_LIMIT:-2.0}
+          memory: ${API_MEMORY_LIMIT:-2G}
+
+  worker:
+    <<: *node-runtime
+    image: ${NOTES_WORKER_IMAGE:?NOTES_WORKER_IMAGE must be an immutable image reference}
+    build: !reset null
+    depends_on: !override
+      migrate:
+        condition: service_completed_successfully
+      object-storage:
+        condition: service_healthy
+      object-storage-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      INTERNAL_INTEGRATION_SECRET: ${INTERNAL_INTEGRATION_SECRET:?INTERNAL_INTEGRATION_SECRET must be set}
+      OBJECT_STORAGE_ACCESS_KEY: ${MINIO_APP_USER:?MINIO_APP_USER must be set}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET must be set}
+      OBJECT_STORAGE_SECRET_KEY: ${MINIO_APP_PASSWORD:?MINIO_APP_PASSWORD must be set}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL must be set}
+      SMTP_FROM: ${SMTP_FROM:?SMTP_FROM must be set}
+      SMTP_HOST: ${SMTP_HOST:?SMTP_HOST must be set}
+      SMTP_PASS: ${SMTP_PASS:?SMTP_PASS must be set}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      SMTP_USER: ${SMTP_USER:?SMTP_USER must be set}
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          cpus: ${WORKER_CPU_LIMIT:-2.0}
+          memory: ${WORKER_MEMORY_LIMIT:-2G}
+
+  web:
+    <<: *node-runtime
+    image: ${NOTES_WEB_IMAGE:?NOTES_WEB_IMAGE must be an immutable image reference}
+    build: !reset null
+    ports: !reset []
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /app/apps/web/.next/cache:rw,noexec,nosuid,size=128m
+    deploy:
+      resources:
+        limits:
+          cpus: ${WEB_CPU_LIMIT:-1.0}
+          memory: ${WEB_MEMORY_LIMIT:-1G}
+
+  prometheus:
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: ${PROMETHEUS_CPU_LIMIT:-1.0}
+          memory: ${PROMETHEUS_MEMORY_LIMIT:-1G}
+
+  alertmanager:
+    depends_on: !reset {}
+    logging: *logging
+    volumes:
+      - ${ALERTMANAGER_CONFIG_PATH:?ALERTMANAGER_CONFIG_PATH must be set}:/etc/alertmanager/alertmanager.yml:ro
+      - notes-v2-alertmanager:/alertmanager
+    deploy:
+      resources:
+        limits:
+          cpus: ${ALERTMANAGER_CPU_LIMIT:-0.5}
+          memory: ${ALERTMANAGER_MEMORY_LIMIT:-256M}
+
+  otel-collector:
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: ${OTEL_CPU_LIMIT:-0.5}
+          memory: ${OTEL_MEMORY_LIMIT:-512M}
+
+  tempo:
+    logging: *logging
+    deploy:
+      resources:
+        limits:
+          cpus: ${TEMPO_CPU_LIMIT:-1.0}
+          memory: ${TEMPO_MEMORY_LIMIT:-1G}
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    depends_on:
+      object-storage:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL must be set}
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN must be set}
+      OBJECT_STORAGE_DOMAIN: ${OBJECT_STORAGE_DOMAIN:?OBJECT_STORAGE_DOMAIN must be set}
+    logging: *logging
+    ports:
+      - 80:80
+      - 443:443
+      - 443:443/udp
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - notes-ai-caddy-config:/config
+      - notes-ai-caddy-data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: ${CADDY_CPU_LIMIT:-0.5}
+          memory: ${CADDY_MEMORY_LIMIT:-256M}
+
+volumes:
+  notes-ai-caddy-config:
+  notes-ai-caddy-data:

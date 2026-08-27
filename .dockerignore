@@ -1,0 +1,11 @@
+.git
+.github
+.idea
+.turbo
+**/.next
+**/dist
+**/node_modules
+**/*.tsbuildinfo
+coverage
+playwright-report
+test-results
